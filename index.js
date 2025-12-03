@@ -10,7 +10,7 @@ const http = require('http');
 // --- CONFIG ---
 const SUPABASE_URL = "https://qbedywgbdwxaucimgiok.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo";
-const MAX_SAFE_CONCURRENCY = 2500;
+const MAX_SAFE_CONCURRENCY = 4000;
 
 // --- KEEPALIVE SERVER (REQUIRED FOR RAILWAY/RENDER) ---
 const PORT = process.env.PORT || 3000;
