@@ -2,5 +2,5 @@
   "name": "stressforge-agent",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": { "start": "node --max-old-space-size=4096 index.js" }
+  "scripts": { "start": "node --max-old-space-size=460 index.js" }
 }
