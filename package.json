@@ -1,7 +1,7 @@
 
 {
   "name": "securityforge-agent",
-  "version": "27.0.0",
+  "version": "31.0.0",
   "description": "SecurityForge Omniscient Agent",
   "main": "index.js",
   "scripts": {
