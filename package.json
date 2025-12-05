@@ -5,7 +5,7 @@
   "description": "SecurityForge DOOMSDAY Agent",
   "main": "index.js",
   "scripts": {
-    "start": "node --max-old-space-size=512 index.js"
+    "start": "node --max-old-space-size=4096 index.js"
   },
   "dependencies": {
     "axios": "^1.6.0"
