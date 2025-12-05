@@ -1,8 +1,8 @@
 
 {
   "name": "securityforge-agent",
-  "version": "36.9.0",
-  "description": "SecurityForge Omniscient Agent V36.9",
+  "version": "37.3.0",
+  "description": "SecurityForge Omniscient Agent V37.3 (Ultimate)",
   "main": "index.js",
   "scripts": {
     "start": "node --max-old-space-size=460 index.js"
