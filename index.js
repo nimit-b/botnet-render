@@ -1,5 +1,5 @@
 /**
- * SECURITYFORGE ENTERPRISE AGENT V41.0 (SMART RECON)
+ * SECURITYFORGE ENTERPRISE AGENT V41.0.3 (REGEX HOTFIX)
  * 
  * [SYSTEM ARCHITECTURE]
  * - CORE: Native Node.js Modules (Net, Dgram, TLS, HTTP/2) for raw socket manipulation.
@@ -144,7 +144,8 @@ const performSmartRecon = (target) => {
             if (res.statusCode === 200) {
                 const lines = data.split('\n');
                 lines.forEach(l => {
-                    const match = l.match(/Disallow:s*(.+)/i);
+                    // Double escaped backslash for template literal safety
+                    const match = l.match(/Disallow:\s*(.+)/i);
                     if (match && match[1]) {
                         const path = match[1].trim();
                         if (!STATE.dynamicPaths.includes(path)) {
@@ -164,7 +165,8 @@ const performSmartRecon = (target) => {
         res.on('data', c => data += c);
         res.on('end', () => {
             // Simple regex to find hrefs that start with /
-            const hrefs = data.match(/href=["'](/[^"']+)["']/g);
+            // Double escaped backslash to ensure output is /
+            const hrefs = data.match(/href=["'](\/[^"']+)["']/g);
             if (hrefs) {
                 hrefs.forEach(h => {
                     const clean = h.replace(/href=["']/, '').replace(/["']/, '');
@@ -416,7 +418,7 @@ const startJob = (job) => {
     STATE.priorityLogs = [];
     STATE.dynamicPaths = [];
     
-    log(`STARTING JOB ${job.id} | TARGET: ${job.target} | THREADS: ${job.concurrency} | V41.0`);
+    log(`STARTING JOB ${job.id} | TARGET: ${job.target} | THREADS: ${job.concurrency} | V41.0.3`);
 
     const target = getTargetDetails(job.target);
     if (!target) { log("INVALID TARGET URL", 'ERROR'); return; }
@@ -521,5 +523,5 @@ setInterval(async () => {
     }
 }, 1000);
 
-console.log('SecurityForge Enterprise Agent V41.0 Online');
+console.log('SecurityForge Enterprise Agent V41.0.3 Online');
 console.log('Modules Loaded: L7, L4, IoT, Infra, Smart Recon');
