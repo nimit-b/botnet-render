@@ -1,5 +1,5 @@
 /**
- * SECURITYFORGE ENTERPRISE AGENT V41.0.3 (REGEX HOTFIX)
+ * SECURITYFORGE ENTERPRISE AGENT V41.0.4 (JS COMPATIBILITY FIX)
  * 
  * [SYSTEM ARCHITECTURE]
  * - CORE: Native Node.js Modules (Net, Dgram, TLS, HTTP/2) for raw socket manipulation.
@@ -418,7 +418,7 @@ const startJob = (job) => {
     STATE.priorityLogs = [];
     STATE.dynamicPaths = [];
     
-    log(`STARTING JOB ${job.id} | TARGET: ${job.target} | THREADS: ${job.concurrency} | V41.0.3`);
+    log(`STARTING JOB ${job.id} | TARGET: ${job.target} | THREADS: ${job.concurrency} | V41.0.4`);
 
     const target = getTargetDetails(job.target);
     if (!target) { log("INVALID TARGET URL", 'ERROR'); return; }
@@ -489,7 +489,7 @@ setInterval(async () => {
             return;
         }
 
-        const payload: any = {
+        const payload = {
             current_rps: Math.round(rps) || 0,
             avg_latency: Math.round(avgLat) || 0,
             total_success: STATE.stats.success,
@@ -504,7 +504,7 @@ setInterval(async () => {
             STATE.logs = []; // Clear buffers
         }
 
-        const res: any = await makeSupabaseRequest('PATCH', `jobs?id=eq.${STATE.activeJob.id}`, payload);
+        const res = await makeSupabaseRequest('PATCH', `jobs?id=eq.${STATE.activeJob.id}`, payload);
         
         STATE.lastReport = now;
         
@@ -512,7 +512,7 @@ setInterval(async () => {
     } 
     // 2. Poll for New Jobs if Idle
     else if (!STATE.running) {
-        const jobs: any = await makeSupabaseRequest('GET', 'jobs?status=eq.PENDING&order=created_at.desc&limit=1&select=*');
+        const jobs = await makeSupabaseRequest('GET', 'jobs?status=eq.PENDING&order=created_at.desc&limit=1&select=*');
         if (jobs && jobs.length > 0) {
             const job = jobs[0];
             try { job.headers = typeof job.headers === 'string' ? JSON.parse(job.headers) : job.headers; } catch {}
@@ -523,5 +523,5 @@ setInterval(async () => {
     }
 }, 1000);
 
-console.log('SecurityForge Enterprise Agent V41.0.3 Online');
+console.log('SecurityForge Enterprise Agent V41.0.4 Online');
 console.log('Modules Loaded: L7, L4, IoT, Infra, Smart Recon');
